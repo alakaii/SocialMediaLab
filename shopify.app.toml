@@ -1,0 +1,24 @@
+name = "social-media-lab"
+client_id = "{{ SHOPIFY_API_KEY }}"
+application_url = "{{ HOST }}"
+embedded = true
+
+[access_scopes]
+scopes = "write_products,read_products"
+
+[auth]
+redirect_urls = [
+  "{{ HOST }}/auth/callback",
+  "{{ HOST }}/auth/shopify/callback",
+  "{{ HOST }}/shopify/auth/callback"
+]
+
+[webhooks]
+api_version = "2025-01"
+
+  [[webhooks.subscriptions]]
+  topics = ["app/uninstalled"]
+  uri = "/webhooks/app/uninstalled"
+
+[pos]
+embedded = false
