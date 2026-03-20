@@ -1,0 +1,120 @@
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model Session {
+  id            String    @id
+  shop          String
+  state         String
+  isOnline      Boolean   @default(false)
+  scope         String?
+  expires       DateTime?
+  accessToken   String
+  userId        BigInt?
+  firstName     String?
+  lastName      String?
+  email         String?
+  accountOwner  Boolean   @default(false)
+  locale        String?
+  collaborator  Boolean?  @default(false)
+  emailVerified Boolean?  @default(false)
+}
+
+model Brand {
+  id          String   @id @default(cuid())
+  shop        String
+  name        String
+  logoUrl     String?
+  timezone    String   @default("UTC")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  posts       Post[]
+  oauthTokens OAuthToken[]
+
+  @@index([shop])
+}
+
+model OAuthToken {
+  id           String    @id @default(cuid())
+  brandId      String
+  platform     String
+  accessToken  String
+  refreshToken String?
+  tokenSecret  String?
+  expiresAt    DateTime?
+  accountId    String
+  accountName  String?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  brand        Brand     @relation(fields: [brandId], references: [id], onDelete: Cascade)
+
+  @@unique([brandId, platform])
+  @@index([brandId])
+}
+
+model Post {
+  id          String    @id @default(cuid())
+  shop        String
+  brandId     String
+  postType    String
+  status      String    @default("draft")
+  scheduledAt DateTime?
+  publishedAt DateTime?
+  bullJobId   String?
+  mainContent String
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  brand         Brand          @relation(fields: [brandId], references: [id])
+  platformPosts PostPlatform[]
+  mediaAssets   MediaAsset[]
+
+  @@index([shop])
+  @@index([brandId])
+  @@index([scheduledAt])
+  @@index([status])
+}
+
+model PostPlatform {
+  id             String    @id @default(cuid())
+  postId         String
+  platform       String
+  content        String?
+  extraJson      String?
+  status         String    @default("pending")
+  platformPostId String?
+  errorMessage   String?
+  publishedAt    DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  post           Post      @relation(fields: [postId], references: [id], onDelete: Cascade)
+
+  @@unique([postId, platform])
+  @@index([postId])
+}
+
+model MediaAsset {
+  id          String   @id @default(cuid())
+  postId      String
+  url         String
+  mimeType    String
+  width       Int?
+  height      Int?
+  durationSec Float?
+  sizeBytes   Int?
+  altText     String?
+  sortOrder   Int      @default(0)
+  createdAt   DateTime @default(now())
+
+  post        Post     @relation(fields: [postId], references: [id], onDelete: Cascade)
+
+  @@index([postId])
+}
