@@ -45,6 +45,9 @@
     "vite": "^6.0.7",
     "@shopify/eslint-plugin": "^46.0.0"
   },
+  "optionalDependencies": {
+    "@rollup/rollup-linux-x64-gnu": "*"
+  },
   "engines": {
     "node": ">=22.0.0"
   },
