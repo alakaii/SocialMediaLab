@@ -43,6 +43,7 @@
     "tsx": "^4.19.2",
     "typescript": "^5.7.3",
     "vite": "^6.0.7",
+    "vite-tsconfig-paths": "^5.1.4",
     "@shopify/eslint-plugin": "^46.0.0"
   },
   "optionalDependencies": {
