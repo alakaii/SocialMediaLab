@@ -19,6 +19,10 @@ export default defineConfig({
     strictPort: true,
   },
   ssr: {
-    noExternal: ["@shopify/app-bridge-react", "@shopify/polaris"],
+    noExternal: [
+      "@shopify/app-bridge-react",
+      "@shopify/polaris",
+      "@shopify/shopify-app-remix",
+    ],
   },
 }) satisfies UserConfig;
