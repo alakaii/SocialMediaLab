@@ -2,10 +2,12 @@ import type { LoaderFunctionArgs } from "@remix-run/node";
 import { redirect } from "@remix-run/node";
 import axios from "axios";
 import shopify from "../shopify.server.js";
-import { upsertOAuthToken } from "../services/oauth.server.js";
+import { prisma } from "../db.server.js";
+import { upsertOAuthToken, oauthStateCookie } from "../services/oauth.server.js";
+import type { OAuthState } from "../services/oauth.server.js";
 
 export const loader = async ({ request, params }: LoaderFunctionArgs) => {
-  await shopify.authenticate.admin(request);
+  const { session } = await shopify.authenticate.admin(request);
   const url = new URL(request.url);
   const code = url.searchParams.get("code");
   const state = url.searchParams.get("state");
@@ -13,7 +15,19 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
 
   if (!code || !state) throw new Response("Invalid callback", { status: 400 });
 
-  const { brandId } = JSON.parse(Buffer.from(state, "base64url").toString());
+  const stored = (await oauthStateCookie.parse(request.headers.get("Cookie"))) as
+    | OAuthState
+    | null;
+  if (!stored || stored.nonce !== state) {
+    throw new Response("Invalid OAuth state", { status: 400 });
+  }
+  const { brandId, codeVerifier } = stored;
+
+  const brand = await prisma.brand.findUnique({ where: { id: brandId } });
+  if (!brand || brand.shop !== session.shop) {
+    throw new Response("Brand not found", { status: 404 });
+  }
+
   const redirectUri = `${url.protocol}//${url.host}/api/oauth/${platform}/callback`;
 
   let accessToken: string;
@@ -31,7 +45,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
           grant_type: "authorization_code",
           client_id: process.env.TWITTER_CLIENT_ID!,
           redirect_uri: redirectUri,
-          code_verifier: "challenge",
+          code_verifier: codeVerifier,
         }),
         {
           headers: {
@@ -71,6 +85,31 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
       break;
     }
 
+    case "tiktok": {
+      const res = await axios.post(
+        "https://open.tiktokapis.com/v2/oauth/token/",
+        new URLSearchParams({
+          client_key: process.env.TIKTOK_CLIENT_KEY!,
+          client_secret: process.env.TIKTOK_CLIENT_SECRET!,
+          code,
+          grant_type: "authorization_code",
+          redirect_uri: redirectUri,
+          code_verifier: codeVerifier,
+        }),
+        { headers: { "Content-Type": "application/x-www-form-urlencoded" } },
+      );
+      accessToken = res.data.access_token;
+      refreshToken = res.data.refresh_token;
+      expiresAt = res.data.expires_in ? new Date(Date.now() + res.data.expires_in * 1000) : undefined;
+      const me = await axios.get("https://open.tiktokapis.com/v2/user/info/", {
+        params: { fields: "open_id,display_name" },
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+      accountId = me.data.data.user.open_id;
+      accountName = me.data.data.user.display_name;
+      break;
+    }
+
     case "linkedin": {
       const res = await axios.post(
         "https://www.linkedin.com/oauth/v2/accessToken",
@@ -86,11 +125,11 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
       accessToken = res.data.access_token;
       refreshToken = res.data.refresh_token;
       expiresAt = res.data.expires_in ? new Date(Date.now() + res.data.expires_in * 1000) : undefined;
-      const me = await axios.get("https://api.linkedin.com/v2/me", {
+      const me = await axios.get("https://api.linkedin.com/v2/userinfo", {
         headers: { Authorization: `Bearer ${accessToken}` },
       });
-      accountId = me.data.id;
-      accountName = `${me.data.localizedFirstName} ${me.data.localizedLastName}`;
+      accountId = me.data.sub;
+      accountName = me.data.name;
       break;
     }
 
@@ -127,5 +166,9 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     accountName,
   });
 
-  return redirect("/app/connections");
+  return redirect("/app/connections", {
+    headers: {
+      "Set-Cookie": await oauthStateCookie.serialize("", { maxAge: 0 }),
+    },
+  });
 };

@@ -1,6 +1,7 @@
 import type { Job } from "bullmq";
 import { PrismaClient } from "@prisma/client";
 import { getAdapter } from "../../app/adapters/index.js";
+import { getFreshToken } from "../../app/services/token-refresh.server.js";
 import type { Platform } from "../../app/types/post.js";
 import { PostStatus, PlatformPostStatus } from "../../app/types/post.js";
 
@@ -18,7 +19,6 @@ export async function publishPost(job: Job<JobData>): Promise<void> {
     include: {
       platformPosts: true,
       mediaAssets: { orderBy: { sortOrder: "asc" } },
-      brand: { include: { oauthTokens: true } },
     },
   });
 
@@ -40,27 +40,8 @@ export async function publishPost(job: Job<JobData>): Promise<void> {
       const platform = pp.platform as Platform;
       const adapter = getAdapter(platform);
 
-      const token = post.brand.oauthTokens.find((t) => t.platform === platform);
-      if (!token) {
-        throw new Error(`No OAuth token for platform: ${platform}`);
-      }
-
-      // Refresh token if close to expiry
-      let accessToken = token.accessToken;
-      if (token.expiresAt && token.expiresAt.getTime() - Date.now() < 5 * 60 * 1000) {
-        if (adapter.refreshAccessToken && token.refreshToken) {
-          const refreshed = await adapter.refreshAccessToken(token.refreshToken);
-          await prisma.oAuthToken.update({
-            where: { id: token.id },
-            data: {
-              accessToken: refreshed.accessToken,
-              refreshToken: refreshed.refreshToken ?? token.refreshToken,
-              expiresAt: refreshed.expiresAt,
-            },
-          });
-          accessToken = refreshed.accessToken;
-        }
-      }
+      // Decrypts the stored token and refreshes it in place if near expiry.
+      const token = await getFreshToken(post.brandId, platform);
 
       const content = pp.content ?? post.mainContent;
       const extra = pp.extraJson ? (JSON.parse(pp.extraJson) as Record<string, unknown>) : {};
@@ -69,7 +50,7 @@ export async function publishPost(job: Job<JobData>): Promise<void> {
         content,
         mediaAssets: post.mediaAssets,
         extra,
-        accessToken,
+        accessToken: token.accessToken,
         refreshToken: token.refreshToken ?? undefined,
         tokenSecret: token.tokenSecret ?? undefined,
         accountId: token.accountId,
