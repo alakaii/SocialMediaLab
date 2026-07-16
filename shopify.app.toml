@@ -1,5 +1,5 @@
 name = "social-media-lab"
-client_id = "{{ SHOPIFY_API_KEY }}"
+client_id = "45a73e3c9a49c248c9f5fad51cf42662"
 application_url = "https://socialmedialab-production.up.railway.app"
 embedded = true
 
