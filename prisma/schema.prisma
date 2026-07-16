@@ -69,6 +69,14 @@ model Post {
   publishedAt DateTime?
   bullJobId   String?
   mainContent String
+
+  // Optional linked Shopify product. Products live in Shopify, so these are
+  // plain nullable columns with no relation.
+  productId     String?
+  productHandle String?
+  productTitle  String?
+  productUrl    String?
+
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
 
@@ -126,4 +134,16 @@ model MediaAsset {
   post        Post     @relation(fields: [postId], references: [id], onDelete: Cascade)
 
   @@index([postId])
+}
+
+model ProductHashtag {
+  id         String   @id @default(cuid())
+  shop       String
+  productId  String
+  hashtag    String
+  usageCount Int      @default(1)
+  lastUsedAt DateTime @updatedAt
+
+  @@unique([shop, productId, hashtag])
+  @@index([shop, productId])
 }

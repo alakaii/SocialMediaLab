@@ -6,6 +6,7 @@ export interface MediaAssetPayload {
   width?: number | null;
   height?: number | null;
   durationSec?: number | null;
+  altText?: string | null;
 }
 
 export interface PublishPayload {

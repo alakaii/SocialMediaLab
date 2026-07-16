@@ -100,6 +100,16 @@ export const PLATFORM_CONSTRAINTS: Record<Platform, PlatformConstraints> = {
     videoMaxSec: 60,
     note: "Title is the most important field for discoverability.",
   },
+  [Platform.Bluesky]: {
+    label: "Bluesky",
+    icon: "🦋",
+    maxChars: 300,
+    maxImages: 4,
+    supportedPostTypes: [PostType.Text, PostType.Image],
+    supportsLinkPreview: true,
+    hashtagStyle: "inline",
+    note: "Links and mentions become clickable automatically. Video posting is not supported yet.",
+  },
 };
 
 export function getPlatformsForPostType(postType: PostType): Platform[] {

@@ -1,7 +1,23 @@
+import { useEffect, useState } from "react";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import { useLoaderData, useFetcher } from "@remix-run/react";
-import { Page, Layout, Card, BlockStack, Text, InlineStack, Button, Badge, Divider, Box } from "@shopify/polaris";
+import {
+  Page,
+  Layout,
+  Card,
+  BlockStack,
+  Text,
+  InlineStack,
+  Button,
+  Badge,
+  Divider,
+  Box,
+  Modal,
+  TextField,
+  Banner,
+  Link,
+} from "@shopify/polaris";
 import shopify from "../shopify.server.js";
 import { getBrands } from "../services/brand.server.js";
 import { deleteOAuthToken, getConnectedPlatforms } from "../services/oauth.server.js";
@@ -41,9 +57,109 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
 const ALL_PLATFORMS = Object.values(Platform);
 
+interface BlueskyConnectResponse {
+  ok: boolean;
+  error?: string;
+}
+
+function BlueskyConnectModal({
+  brand,
+  onClose,
+}: {
+  brand: { id: string; name: string } | null;
+  onClose: () => void;
+}) {
+  const fetcher = useFetcher<BlueskyConnectResponse>();
+  const [handle, setHandle] = useState("");
+  const [appPassword, setAppPassword] = useState("");
+
+  const open = brand !== null;
+  const submitting = fetcher.state !== "idle";
+  const error = fetcher.data && fetcher.data.ok === false ? fetcher.data.error : undefined;
+
+  // Reset the form each time the modal is opened for a brand.
+  useEffect(() => {
+    if (open) {
+      setHandle("");
+      setAppPassword("");
+    }
+  }, [open, brand?.id]);
+
+  // Close the modal once a connection succeeds.
+  useEffect(() => {
+    if (fetcher.state === "idle" && fetcher.data?.ok === true) {
+      onClose();
+    }
+  }, [fetcher.state, fetcher.data, onClose]);
+
+  const submit = () => {
+    if (!brand) return;
+    fetcher.submit(
+      { brandId: brand.id, handle, appPassword },
+      { method: "POST", action: "/api/bluesky/connect" },
+    );
+  };
+
+  return (
+    <Modal
+      open={open}
+      onClose={onClose}
+      title="Connect Bluesky"
+      primaryAction={{
+        content: "Connect",
+        onAction: submit,
+        loading: submitting,
+        disabled: submitting || !handle.trim() || !appPassword.trim(),
+      }}
+      secondaryActions={[{ content: "Cancel", onAction: onClose, disabled: submitting }]}
+    >
+      <Modal.Section>
+        <BlockStack gap="400">
+          {error && (
+            <Banner tone="critical">
+              <p>{error}</p>
+            </Banner>
+          )}
+          <Text as="p" variant="bodyMd">
+            Bluesky connects with an app password instead of a login. Create one
+            under Bluesky Settings, then App Passwords, and paste it below. Your
+            main account password is never used.
+          </Text>
+          <TextField
+            label="Handle"
+            value={handle}
+            onChange={setHandle}
+            autoComplete="off"
+            placeholder="name.bsky.social"
+            helpText="Your Bluesky handle, for example name.bsky.social."
+            disabled={submitting}
+          />
+          <TextField
+            label="App password"
+            value={appPassword}
+            onChange={setAppPassword}
+            type="password"
+            autoComplete="off"
+            placeholder="xxxx-xxxx-xxxx-xxxx"
+            disabled={submitting}
+          />
+          <Text as="p" variant="bodySm" tone="subdued">
+            Need one? Open{" "}
+            <Link url="https://bsky.app/settings/app-passwords" external>
+              Bluesky app passwords
+            </Link>{" "}
+            to create an app password.
+          </Text>
+        </BlockStack>
+      </Modal.Section>
+    </Modal>
+  );
+}
+
 export default function Connections() {
-  const { brands, baseUrl } = useLoaderData<typeof loader>();
+  const { brands } = useLoaderData<typeof loader>();
   const fetcher = useFetcher();
+  const [blueskyBrand, setBlueskyBrand] = useState<{ id: string; name: string } | null>(null);
 
   return (
     <Page title="Social Media Connections">
@@ -93,6 +209,14 @@ export default function Connections() {
                             <Button size="slim" url={`/app/brands/${brand.id}`}>
                               Set API Key
                             </Button>
+                          ) : platform === Platform.Bluesky ? (
+                            <Button
+                              size="slim"
+                              variant="primary"
+                              onClick={() => setBlueskyBrand({ id: brand.id, name: brand.name })}
+                            >
+                              Connect
+                            </Button>
                           ) : (
                             <Button size="slim" variant="primary" url={oauthUrl}>
                               Connect
@@ -119,6 +243,8 @@ export default function Connections() {
           </Layout.Section>
         )}
       </Layout>
+
+      <BlueskyConnectModal brand={blueskyBrand} onClose={() => setBlueskyBrand(null)} />
     </Page>
   );
 }

@@ -30,6 +30,7 @@ export enum Platform {
   LinkedIn = "linkedin",
   RedNote = "rednote",
   YouTubeShorts = "youtube_shorts",
+  Bluesky = "bluesky",
 }
 
 export interface WizardState {
@@ -40,6 +41,14 @@ export interface WizardState {
   mainContent: string;
   mediaAssets: WizardMediaAsset[];
   platformOverrides: Partial<Record<Platform, PlatformOverride>>;
+  product: LinkedProduct | null;
+}
+
+export interface LinkedProduct {
+  id: string; // Shopify product GID, e.g. gid://shopify/Product/123
+  handle: string;
+  title: string;
+  url: string; // https://<shop-domain>/products/<handle>
 }
 
 export interface WizardMediaAsset {
@@ -66,4 +75,5 @@ export const EMPTY_WIZARD_STATE: WizardState = {
   mainContent: "",
   mediaAssets: [],
   platformOverrides: {},
+  product: null,
 };

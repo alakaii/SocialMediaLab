@@ -4,7 +4,7 @@ application_url = "https://socialmedialab-production.up.railway.app"
 embedded = true
 
 [access_scopes]
-scopes = "read_files,write_files,read_products"
+scopes = "read_files,write_files,read_products,read_content"
 
 [auth]
 redirect_urls = [

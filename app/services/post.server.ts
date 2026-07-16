@@ -1,6 +1,7 @@
 import { prisma } from "../db.server.js";
 import { enqueuePost, removeJob } from "../queue.server.js";
 import { jitteredPublishAt } from "../utils/jitter.js";
+import { recordProductHashtags } from "./hashtag.server.js";
 import type { WizardState } from "../types/post.js";
 import { PostStatus } from "../types/post.js";
 
@@ -32,6 +33,7 @@ export async function getPost(id: string, shop: string) {
 }
 
 export async function createPost(shop: string, wizard: WizardState) {
+  const product = wizard.product ?? null;
   const post = await prisma.post.create({
     data: {
       shop,
@@ -40,6 +42,10 @@ export async function createPost(shop: string, wizard: WizardState) {
       status: PostStatus.Draft,
       scheduledAt: wizard.scheduledAt ? new Date(wizard.scheduledAt) : null,
       mainContent: wizard.mainContent,
+      productId: product?.id ?? null,
+      productHandle: product?.handle ?? null,
+      productTitle: product?.title ?? null,
+      productUrl: product?.url ?? null,
       platformPosts: {
         create: wizard.platforms.map((platform) => {
           const override = wizard.platformOverrides[platform];
@@ -64,6 +70,17 @@ export async function createPost(shop: string, wizard: WizardState) {
       },
     },
   });
+
+  // Remember which hashtags were used for this product so we can suggest them
+  // next time. Non-fatal: never block post creation on hashtag bookkeeping.
+  if (product?.id) {
+    try {
+      await recordProductHashtags(shop, product.id, wizard.mainContent);
+    } catch {
+      // ignore
+    }
+  }
+
   return post;
 }
 

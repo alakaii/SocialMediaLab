@@ -7,6 +7,7 @@ import { tiktokAdapter } from "./tiktok.js";
 import { linkedinAdapter } from "./linkedin.js";
 import { redNoteAdapter } from "./rednote.js";
 import { youtubeShortsAdapter } from "./youtube.js";
+import { blueskyAdapter } from "./bluesky.js";
 
 const registry = new Map<Platform, PlatformAdapter>([
   [Platform.Twitter, twitterAdapter],
@@ -17,6 +18,7 @@ const registry = new Map<Platform, PlatformAdapter>([
   [Platform.LinkedIn, linkedinAdapter],
   [Platform.RedNote, redNoteAdapter],
   [Platform.YouTubeShorts, youtubeShortsAdapter],
+  [Platform.Bluesky, blueskyAdapter],
 ]);
 
 export function getAdapter(platform: Platform): PlatformAdapter {

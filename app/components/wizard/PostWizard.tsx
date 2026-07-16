@@ -21,10 +21,11 @@ interface Brand {
 
 interface PostWizardProps {
   brands: Brand[];
+  shop: string;
   initial?: Partial<WizardState>;
 }
 
-export function PostWizard({ brands, initial }: PostWizardProps) {
+export function PostWizard({ brands, shop, initial }: PostWizardProps) {
   const { state, setState, step, next, back, canAdvance, setPlatformOverride } = useWizardState(initial);
   const fetcher = useFetcher();
 
@@ -79,8 +80,11 @@ export function PostWizard({ brands, initial }: PostWizardProps) {
             postType={state.postType!}
             mainContent={state.mainContent}
             mediaAssets={state.mediaAssets}
+            product={state.product}
+            shop={shop}
             onContentChange={(mainContent) => setState((s) => ({ ...s, mainContent }))}
             onMediaChange={(mediaAssets) => setState((s) => ({ ...s, mediaAssets }))}
+            onProductChange={(product) => setState((s) => ({ ...s, product }))}
           />
         );
       case 5:

@@ -82,6 +82,16 @@ export default function PostDetail() {
                 <Text as="p" variant="bodyMd">{post.mainContent}</Text>
               </BlockStack>
 
+              {post.productTitle && (
+                <BlockStack gap="200">
+                  <Text as="p" tone="subdued">Linked product</Text>
+                  <Text as="p" variant="bodyMd">{post.productTitle}</Text>
+                  {post.productUrl && (
+                    <Text as="p" variant="bodySm" tone="subdued">{post.productUrl}</Text>
+                  )}
+                </BlockStack>
+              )}
+
               <Divider />
 
               <Text as="h3" variant="headingSm">Per-Platform Status</Text>
