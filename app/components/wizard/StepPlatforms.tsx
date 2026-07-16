@@ -1,7 +1,15 @@
 import { BlockStack, Card, Text, InlineGrid, Box, InlineStack, Icon } from "@shopify/polaris";
+import type { BoxProps } from "@shopify/polaris";
+import type { ComponentType } from "react";
 import { CheckIcon, AlertCircleIcon } from "@shopify/polaris-icons";
 import { Platform, PostType } from "../../types/post.js";
 import { PLATFORM_CONSTRAINTS, getPlatformsForPostType } from "../../utils/platformConstraints.js";
+
+// Box renders its `as` element via React.createElement and forwards extra props
+// (like onClick) at runtime, but its types omit the 'button' element and onClick.
+const ClickableBox = Box as ComponentType<
+  Omit<BoxProps, "as"> & { as?: "button"; onClick?: () => void }
+>;
 
 interface StepPlatformsProps {
   postType: PostType;
@@ -34,7 +42,7 @@ export function StepPlatforms({ postType, connectedPlatforms, selected, onChange
             const isDisabled = !isConnected;
 
             return (
-              <Box
+              <ClickableBox
                 key={platform}
                 padding="400"
                 background={isSelected ? "bg-surface-selected" : isDisabled ? "bg-surface-disabled" : "bg-surface"}
@@ -57,7 +65,7 @@ export function StepPlatforms({ postType, connectedPlatforms, selected, onChange
                   {isSelected && <Icon source={CheckIcon} tone="success" />}
                   {isDisabled && !isSelected && <Icon source={AlertCircleIcon} tone="caution" />}
                 </InlineStack>
-              </Box>
+              </ClickableBox>
             );
           })}
         </InlineGrid>

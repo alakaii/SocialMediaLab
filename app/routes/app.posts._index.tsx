@@ -45,7 +45,7 @@ export default function PostsList() {
                       <InlineStack gap="100">
                         {post.platformPosts.map((pp) => (
                           <Badge key={pp.platform} size="small">
-                            {PLATFORM_CONSTRAINTS[pp.platform as Platform]?.icon} {PLATFORM_CONSTRAINTS[pp.platform as Platform]?.label}
+                            {`${PLATFORM_CONSTRAINTS[pp.platform as Platform]?.icon ?? ""} ${PLATFORM_CONSTRAINTS[pp.platform as Platform]?.label ?? ""}`}
                           </Badge>
                         ))}
                       </InlineStack>

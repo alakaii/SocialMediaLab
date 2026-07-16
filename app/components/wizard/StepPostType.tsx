@@ -1,5 +1,13 @@
 import { BlockStack, Card, Text, InlineGrid, Box } from "@shopify/polaris";
+import type { BoxProps } from "@shopify/polaris";
+import type { ComponentType } from "react";
 import { PostType } from "../../types/post.js";
+
+// Box renders its `as` element via React.createElement and forwards extra props
+// (like onClick) at runtime, but its types omit the 'button' element and onClick.
+const ClickableBox = Box as ComponentType<
+  Omit<BoxProps, "as"> & { as?: "button"; onClick?: () => void }
+>;
 
 const POST_TYPES = [
   { type: PostType.Text, icon: "✍️", label: "Text", description: "Words only — great for Twitter, LinkedIn, Facebook" },
@@ -22,7 +30,7 @@ export function StepPostType({ selected, onChange }: StepPostTypeProps) {
           {POST_TYPES.map(({ type, icon, label, description }) => {
             const isSelected = selected === type;
             return (
-              <Box
+              <ClickableBox
                 key={type}
                 padding="400"
                 background={isSelected ? "bg-surface-selected" : "bg-surface"}
@@ -37,7 +45,7 @@ export function StepPostType({ selected, onChange }: StepPostTypeProps) {
                   <Text as="p" variant="headingMd" fontWeight="semibold">{label}</Text>
                   <Text as="p" variant="bodySm" tone="subdued">{description}</Text>
                 </BlockStack>
-              </Box>
+              </ClickableBox>
             );
           })}
         </InlineGrid>

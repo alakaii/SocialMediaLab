@@ -32,7 +32,7 @@ export function TwitterEditor({ content, mediaAssets, onChange }: TwitterEditorP
         value={content}
         onChange={(v) => onChange(v)}
         autoComplete="off"
-        maxLength={c.maxChars}
+        maxLength={c.maxChars ?? undefined}
         showCharacterCount
       />
 

@@ -10,8 +10,6 @@ interface PlatformBadgeProps {
 export function PlatformBadge({ platform, size = "small" }: PlatformBadgeProps) {
   const c = PLATFORM_CONSTRAINTS[platform];
   return (
-    <Badge size={size}>
-      {c.icon} {c.label}
-    </Badge>
+    <Badge size={size}>{`${c.icon} ${c.label}`}</Badge>
   );
 }

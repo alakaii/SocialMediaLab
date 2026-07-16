@@ -20,11 +20,18 @@ export const twitterAdapter: PlatformAdapter = {
       }
     }
 
-    const tweetData: { text: string; media?: { media_ids: [string, ...string[]] } } = {
+    type TweetMediaIds =
+      | [string]
+      | [string, string]
+      | [string, string, string]
+      | [string, string, string, string];
+    const tweetData: { text: string; media?: { media_ids: TweetMediaIds } } = {
       text: payload.content,
     };
     if (mediaIds.length > 0) {
-      tweetData.media = { media_ids: mediaIds as [string, ...string[]] };
+      // mediaIds is capped at 4 by the slice above; the API types media_ids as
+      // a fixed-length tuple, which a dynamically built array can't satisfy statically.
+      tweetData.media = { media_ids: mediaIds as TweetMediaIds };
     }
 
     const tweet = await client.v2.tweet(tweetData);

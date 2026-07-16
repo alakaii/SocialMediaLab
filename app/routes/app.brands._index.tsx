@@ -48,7 +48,6 @@ export default function BrandsList() {
                   shortcutActions={[
                     {
                       content: "Delete",
-                      destructive: true,
                       onAction: () => {
                         fetcher.submit(
                           { _intent: "delete", brandId: brand.id },

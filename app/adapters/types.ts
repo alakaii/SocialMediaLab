@@ -3,9 +3,9 @@ import type { Platform } from "../types/post.js";
 export interface MediaAssetPayload {
   url: string;
   mimeType: string;
-  width?: number;
-  height?: number;
-  durationSec?: number;
+  width?: number | null;
+  height?: number | null;
+  durationSec?: number | null;
 }
 
 export interface PublishPayload {
