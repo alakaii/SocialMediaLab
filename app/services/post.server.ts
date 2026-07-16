@@ -1,9 +1,9 @@
 import { prisma } from "../db.server.js";
-import { enqueuePost, removeJob } from "../queue.server.js";
+import { enqueuePlatformPost, removeJob } from "../queue.server.js";
 import { jitteredPublishAt } from "../utils/jitter.js";
 import { recordProductHashtags } from "./hashtag.server.js";
 import type { WizardState } from "../types/post.js";
-import { PostStatus } from "../types/post.js";
+import { PostStatus, PlatformPostStatus } from "../types/post.js";
 
 export async function getPosts(shop: string, filters?: { status?: string; brandId?: string }) {
   return prisma.post.findMany({
@@ -92,36 +92,37 @@ export async function schedulePost(postId: string, scheduledAt: Date) {
   // same formulaic second. Keep Post.scheduledAt as the user's chosen time.
   const platformPosts = await prisma.postPlatform.findMany({
     where: { postId },
-    select: { id: true },
+    select: { id: true, platform: true },
   });
 
-  const plannedTimes: Date[] = [];
+  // One BullMQ job per platform, each delayed to that platform's own jittered
+  // publishAt. The job id is stored on the PostPlatform row so we can cancel or
+  // reschedule it later. Post.bullJobId is no longer used for scheduled posts
+  // (nulled below) but the column is kept for backward compatibility.
   for (const pp of platformPosts) {
     const publishAt = jitteredPublishAt(scheduledAt, now);
-    plannedTimes.push(publishAt);
+    const job = await enqueuePlatformPost(
+      { postId, postPlatformId: pp.id, platform: pp.platform },
+      publishAt,
+    );
     await prisma.postPlatform.update({
       where: { id: pp.id },
-      data: { publishAt },
+      data: {
+        publishAt,
+        status: PlatformPostStatus.Pending,
+        bullJobId: job.id?.toString() ?? null,
+      },
     });
   }
 
-  // The worker publishes the whole post in a single job, so fire it at the
-  // earliest planned platform time. Each platform still records its own
-  // publishAt (shown in the UI) for when publishing becomes per-platform.
-  const fireAt = plannedTimes.length
-    ? new Date(Math.min(...plannedTimes.map((d) => d.getTime())))
-    : jitteredPublishAt(scheduledAt, now);
-
-  const job = await enqueuePost(postId, fireAt);
   await prisma.post.update({
     where: { id: postId },
     data: {
       status: PostStatus.Scheduled,
       scheduledAt,
-      bullJobId: job.id?.toString(),
+      bullJobId: null,
     },
   });
-  return job;
 }
 
 export async function createAndSchedulePost(shop: string, wizard: WizardState) {
@@ -132,12 +133,35 @@ export async function createAndSchedulePost(shop: string, wizard: WizardState) {
   return post;
 }
 
+/**
+ * Remove every queued BullMQ job tied to a post: the per-platform jobs whose
+ * ids live on each PostPlatform row, plus any legacy post-level job on
+ * Post.bullJobId (from before publishing became per-platform). Also clears the
+ * stored job ids so the rows are not left pointing at removed jobs.
+ */
+async function removeAllJobsForPost(postId: string, legacyJobId: string | null) {
+  const platformPosts = await prisma.postPlatform.findMany({
+    where: { postId },
+    select: { id: true, bullJobId: true },
+  });
+  for (const pp of platformPosts) {
+    if (pp.bullJobId) {
+      await removeJob(pp.bullJobId);
+      await prisma.postPlatform.update({
+        where: { id: pp.id },
+        data: { bullJobId: null },
+      });
+    }
+  }
+  if (legacyJobId) {
+    await removeJob(legacyJobId);
+  }
+}
+
 export async function cancelPost(postId: string, shop: string) {
   const post = await prisma.post.findFirst({ where: { id: postId, shop } });
   if (!post) throw new Error("Post not found");
-  if (post.bullJobId) {
-    await removeJob(post.bullJobId);
-  }
+  await removeAllJobsForPost(postId, post.bullJobId);
   await prisma.post.update({
     where: { id: postId },
     data: { status: PostStatus.Cancelled, bullJobId: null },
@@ -151,9 +175,7 @@ export async function reschedulePost(
 ) {
   const post = await prisma.post.findFirst({ where: { id: postId, shop } });
   if (!post) throw new Error("Post not found");
-  if (post.bullJobId) {
-    await removeJob(post.bullJobId);
-  }
+  await removeAllJobsForPost(postId, post.bullJobId);
   await schedulePost(postId, newScheduledAt);
 }
 

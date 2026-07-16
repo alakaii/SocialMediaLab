@@ -14,20 +14,26 @@ function getPostQueue(): Queue {
   return postQueue;
 }
 
-export async function enqueuePost(postId: string, fireAt: Date) {
+export interface PlatformJobData {
+  postId: string;
+  postPlatformId: string;
+  platform: string;
+}
+
+/**
+ * Enqueue a single platform's publish, delayed to that platform's own jittered
+ * fire time. One BullMQ job now maps to one PostPlatform row.
+ */
+export async function enqueuePlatformPost(data: PlatformJobData, fireAt: Date) {
   const queue = getPostQueue();
   const delay = Math.max(0, fireAt.getTime() - Date.now());
-  return queue.add(
-    "publish",
-    { postId },
-    {
-      delay,
-      attempts: 3,
-      backoff: { type: "exponential", delay: 10_000 },
-      removeOnComplete: 100,
-      removeOnFail: 200,
-    },
-  );
+  return queue.add("publish", data, {
+    delay,
+    attempts: 3,
+    backoff: { type: "exponential", delay: 10_000 },
+    removeOnComplete: 100,
+    removeOnFail: 200,
+  });
 }
 
 export async function removeJob(jobId: string) {

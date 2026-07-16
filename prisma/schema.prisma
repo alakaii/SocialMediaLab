@@ -99,6 +99,7 @@ model PostPlatform {
   status         String    @default("pending")
   platformPostId String?
   errorMessage   String?
+  bullJobId      String?
   publishAt      DateTime?
   publishedAt    DateTime?
   createdAt      DateTime  @default(now())
