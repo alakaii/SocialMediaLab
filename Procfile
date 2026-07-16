@@ -1,2 +1,2 @@
-web: npm run start
+web: bash scripts/start.sh
 worker: npm run worker

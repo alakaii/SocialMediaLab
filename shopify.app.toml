@@ -1,20 +1,20 @@
 name = "social-media-lab"
 client_id = "{{ SHOPIFY_API_KEY }}"
-application_url = "{{ HOST }}"
+application_url = "https://socialmedialab-production.up.railway.app"
 embedded = true
 
 [access_scopes]
-scopes = "write_products,read_products"
+scopes = "read_files,write_files,read_products"
 
 [auth]
 redirect_urls = [
-  "{{ HOST }}/auth/callback",
-  "{{ HOST }}/auth/shopify/callback",
-  "{{ HOST }}/shopify/auth/callback"
+  "https://socialmedialab-production.up.railway.app/auth/callback",
+  "https://socialmedialab-production.up.railway.app/auth/shopify/callback",
+  "https://socialmedialab-production.up.railway.app/shopify/auth/callback"
 ]
 
 [webhooks]
-api_version = "2025-01"
+api_version = "2025-10"
 
   [[webhooks.subscriptions]]
   topics = ["app/uninstalled"]
