@@ -21,20 +21,22 @@
     "@shopify/polaris": "^13.9.5",
     "@shopify/shopify-app-remix": "^3.7.0",
     "@shopify/shopify-app-session-storage-prisma": "^5.1.4",
+    "axios": "^1.7.9",
     "bullmq": "^5.38.0",
+    "busboy": "^1.6.0",
+    "date-holidays": "^3.33.0",
     "dayjs": "^1.11.13",
     "ioredis": "5.9.3",
     "isbot": "^4.4.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "sharp": "^0.33.5",
-    "twitter-api-v2": "^1.19.0",
-    "axios": "^1.7.9",
-    "busboy": "^1.6.0"
+    "twitter-api-v2": "^1.19.0"
   },
   "devDependencies": {
     "@remix-run/dev": "^2.15.0",
     "@shopify/api-codegen-preset": "^1.1.1",
+    "@shopify/eslint-plugin": "^46.0.0",
     "@types/node": "^22.10.5",
     "@types/react": "^18.3.1",
     "@types/react-dom": "^18.3.1",
@@ -43,13 +45,12 @@
     "tsx": "^4.19.2",
     "typescript": "^5.7.3",
     "vite": "^6.0.7",
-    "vite-tsconfig-paths": "^5.1.4",
-    "@shopify/eslint-plugin": "^46.0.0"
+    "vite-tsconfig-paths": "^5.1.4"
   },
   "optionalDependencies": {
-    "@rollup/rollup-linux-x64-gnu": "*",
+    "@img/sharp-libvips-linux-x64": "1.0.4",
     "@img/sharp-linux-x64": "0.33.5",
-    "@img/sharp-libvips-linux-x64": "1.0.4"
+    "@rollup/rollup-linux-x64-gnu": "*"
   },
   "engines": {
     "node": ">=22.0.0"

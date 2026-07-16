@@ -1,5 +1,6 @@
 import { prisma } from "../db.server.js";
 import { enqueuePost, removeJob } from "../queue.server.js";
+import { jitteredPublishAt } from "../utils/jitter.js";
 import type { WizardState } from "../types/post.js";
 import { PostStatus } from "../types/post.js";
 
@@ -67,7 +68,34 @@ export async function createPost(shop: string, wizard: WizardState) {
 }
 
 export async function schedulePost(postId: string, scheduledAt: Date) {
-  const job = await enqueuePost(postId, scheduledAt);
+  const now = new Date();
+
+  // Give each platform its own jittered fire time around the merchant-chosen
+  // scheduledAt, so a multi-platform post does not post everywhere at the exact
+  // same formulaic second. Keep Post.scheduledAt as the user's chosen time.
+  const platformPosts = await prisma.postPlatform.findMany({
+    where: { postId },
+    select: { id: true },
+  });
+
+  const plannedTimes: Date[] = [];
+  for (const pp of platformPosts) {
+    const publishAt = jitteredPublishAt(scheduledAt, now);
+    plannedTimes.push(publishAt);
+    await prisma.postPlatform.update({
+      where: { id: pp.id },
+      data: { publishAt },
+    });
+  }
+
+  // The worker publishes the whole post in a single job, so fire it at the
+  // earliest planned platform time. Each platform still records its own
+  // publishAt (shown in the UI) for when publishing becomes per-platform.
+  const fireAt = plannedTimes.length
+    ? new Date(Math.min(...plannedTimes.map((d) => d.getTime())))
+    : jitteredPublishAt(scheduledAt, now);
+
+  const job = await enqueuePost(postId, fireAt);
   await prisma.post.update({
     where: { id: postId },
     data: {

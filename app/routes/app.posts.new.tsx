@@ -1,7 +1,7 @@
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { json, redirect } from "@remix-run/node";
 import { useLoaderData } from "@remix-run/react";
-import { Page, Layout, Card } from "@shopify/polaris";
+import { Page, Layout, Card, Banner } from "@shopify/polaris";
 import shopify from "../shopify.server.js";
 import { getBrands } from "../services/brand.server.js";
 import { getConnectedPlatforms } from "../services/oauth.server.js";
@@ -25,7 +25,15 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     })),
   );
 
-  return json({ brands });
+  // Holiday prefill: /app/posts/new?date=YYYY-MM-DD&holiday=Name starts a draft
+  // scheduled for that day at noon so the merchant can plan around the occasion.
+  const url = new URL(request.url);
+  const date = url.searchParams.get("date");
+  const holiday = url.searchParams.get("holiday");
+  const prefillScheduledAt =
+    date && /^\d{4}-\d{2}-\d{2}$/.test(date) ? `${date}T12:00:00.000Z` : null;
+
+  return json({ brands, prefillScheduledAt, holiday });
 };
 
 export const action = async ({ request }: ActionFunctionArgs) => {
@@ -47,7 +55,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 };
 
 export default function NewPost() {
-  const { brands } = useLoaderData<typeof loader>();
+  const { brands, prefillScheduledAt, holiday } = useLoaderData<typeof loader>();
+
+  const initial = prefillScheduledAt ? { scheduledAt: prefillScheduledAt } : undefined;
 
   return (
     <Page
@@ -55,9 +65,16 @@ export default function NewPost() {
       backAction={{ content: "Posts", url: "/app/posts" }}
     >
       <Layout>
+        {holiday && prefillScheduledAt && (
+          <Layout.Section>
+            <Banner tone="info">
+              {`Planning a post for ${holiday}. The schedule is set to ${new Date(prefillScheduledAt).toLocaleDateString([], { weekday: "long", month: "long", day: "numeric" })} at 12:00 PM, adjust it as you like.`}
+            </Banner>
+          </Layout.Section>
+        )}
         <Layout.Section>
           <Card>
-            <PostWizard brands={brands} />
+            <PostWizard brands={brands} initial={initial} />
           </Card>
         </Layout.Section>
       </Layout>

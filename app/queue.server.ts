@@ -14,9 +14,9 @@ function getPostQueue(): Queue {
   return postQueue;
 }
 
-export async function enqueuePost(postId: string, scheduledAt: Date) {
+export async function enqueuePost(postId: string, fireAt: Date) {
   const queue = getPostQueue();
-  const delay = Math.max(0, scheduledAt.getTime() - Date.now());
+  const delay = Math.max(0, fireAt.getTime() - Date.now());
   return queue.add(
     "publish",
     { postId },

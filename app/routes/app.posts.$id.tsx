@@ -95,6 +95,11 @@ export default function PostDetail() {
                         <Text as="span" variant="headingMd">{c?.icon}</Text>
                         <BlockStack gap="100">
                           <Text as="p" variant="bodyMd" fontWeight="semibold">{c?.label ?? pp.platform}</Text>
+                          {pp.status === "pending" && pp.publishAt && (
+                            <Text as="p" variant="bodySm" tone="subdued">
+                              {`Fires ~${new Date(pp.publishAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`}
+                            </Text>
+                          )}
                           {pp.content && (
                             <Text as="p" variant="bodySm" tone="subdued">{pp.content.slice(0, 100)}</Text>
                           )}
