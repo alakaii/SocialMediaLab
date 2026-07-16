@@ -3,7 +3,7 @@ import type { BoxProps } from "@shopify/polaris";
 import type { ComponentType } from "react";
 import { CheckIcon, AlertCircleIcon } from "@shopify/polaris-icons";
 import { Platform, PostType } from "../../types/post.js";
-import { PLATFORM_CONSTRAINTS, getPlatformsForPostType } from "../../utils/platformConstraints.js";
+import { PLATFORM_CONSTRAINTS, getPlatformsForPostType, isManualPlatform } from "../../utils/platformConstraints.js";
 
 // Box renders its `as` element via React.createElement and forwards extra props
 // (like onClick) at runtime, but its types omit the 'button' element and onClick.
@@ -37,9 +37,12 @@ export function StepPlatforms({ postType, connectedPlatforms, selected, onChange
         <InlineGrid columns={2} gap="300">
           {compatible.map((platform) => {
             const c = PLATFORM_CONSTRAINTS[platform];
+            // Manual platforms (e.g. RedNote) are posted by copy-paste and need
+            // no token connection, so they are always selectable.
+            const isManual = isManualPlatform(platform);
             const isConnected = connectedPlatforms.includes(platform);
             const isSelected = selected.includes(platform);
-            const isDisabled = !isConnected;
+            const isDisabled = !isConnected && !isManual;
 
             return (
               <ClickableBox
@@ -57,9 +60,11 @@ export function StepPlatforms({ postType, connectedPlatforms, selected, onChange
                     <Text as="span" variant="headingLg">{c.icon}</Text>
                     <BlockStack gap="0">
                       <Text as="p" variant="bodyMd" fontWeight="semibold">{c.label}</Text>
-                      {!isConnected && (
+                      {isManual ? (
+                        <Text as="p" variant="bodySm" tone="subdued">Manual posting</Text>
+                      ) : !isConnected ? (
                         <Text as="p" variant="bodySm" tone="critical">Not connected</Text>
-                      )}
+                      ) : null}
                     </BlockStack>
                   </InlineStack>
                   {isSelected && <Icon source={CheckIcon} tone="success" />}

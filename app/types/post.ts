@@ -19,6 +19,11 @@ export enum PlatformPostStatus {
   Published = "published",
   Failed = "failed",
   Skipped = "skipped",
+  // Manual platforms (e.g. RedNote) have no posting API. At publish time the
+  // worker preps the content and parks the platform here until the merchant
+  // copy-pastes into the app and confirms. Non-terminal: the parent post stays
+  // in "publishing" while any platform sits in this state.
+  AwaitingManual = "awaiting_manual",
 }
 
 export enum Platform {

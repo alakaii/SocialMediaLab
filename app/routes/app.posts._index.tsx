@@ -8,6 +8,7 @@ import { getShopSettings, updateHolidayCountry } from "../services/settings.serv
 import { getUpcomingHolidays, getCountryOptions } from "../services/holidays.server.js";
 import { StatusBadge } from "../components/shared/StatusBadge.js";
 import { PLATFORM_CONSTRAINTS } from "../utils/platformConstraints.js";
+import { PlatformPostStatus } from "../types/post.js";
 import type { Platform } from "../types/post.js";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
@@ -56,7 +57,11 @@ export default function PostsList() {
           <Card padding="0">
             <ResourceList
               items={posts}
-              renderItem={(post) => (
+              renderItem={(post) => {
+                const needsAction = post.platformPosts.some(
+                  (pp) => pp.status === PlatformPostStatus.AwaitingManual,
+                );
+                return (
                 <ResourceItem
                   id={post.id}
                   url={`/app/posts/${post.id}`}
@@ -79,10 +84,14 @@ export default function PostsList() {
                         ))}
                       </InlineStack>
                     </BlockStack>
-                    <StatusBadge status={post.status} />
+                    <InlineStack gap="200" blockAlign="center">
+                      {needsAction && <Badge tone="attention">Action needed</Badge>}
+                      <StatusBadge status={post.status} />
+                    </InlineStack>
                   </InlineStack>
                 </ResourceItem>
-              )}
+                );
+              }}
               emptyState={
                 <BlockStack gap="300" inlineAlign="center">
                   <Text as="p" tone="subdued">No posts yet.</Text>

@@ -4,6 +4,7 @@ import { getAdapter } from "../../app/adapters/index.js";
 import { getFreshToken } from "../../app/services/token-refresh.server.js";
 import type { Platform } from "../../app/types/post.js";
 import { PostStatus, PlatformPostStatus } from "../../app/types/post.js";
+import { isManualPlatform } from "../../app/utils/platformConstraints.js";
 
 const prisma = new PrismaClient();
 
@@ -27,7 +28,12 @@ type JobData = PlatformJobData | LegacyJobData;
 // progress. A platform sits here between claim and success/failure.
 const PLATFORM_PUBLISHING = "publishing";
 
-/** Platform-post statuses that are done and will not change on their own. */
+/**
+ * Platform-post statuses that are done and will not change on their own.
+ * Note: "awaiting_manual" is deliberately excluded — a manual platform is not
+ * finished until the merchant confirms from the UI, so it keeps the parent post
+ * non-terminal (in "publishing") until then.
+ */
 const TERMINAL_PLATFORM_STATUSES: string[] = [
   PlatformPostStatus.Published,
   PlatformPostStatus.Failed,
@@ -101,10 +107,13 @@ async function publishSinglePlatform(job: Job<PlatformJobData>): Promise<void> {
   }
 
   // Idempotency guard: jobs can retry, so never publish a platform twice. If it
-  // is already published (done) or publishing (in flight), skip cleanly.
+  // is already published (done), publishing (in flight), or parked awaiting a
+  // manual copy-paste, skip cleanly. A retried manual job seeing awaiting_manual
+  // must not re-run and reset the merchant's in-progress state.
   if (
     pp.status === PlatformPostStatus.Published ||
-    pp.status === PLATFORM_PUBLISHING
+    pp.status === PLATFORM_PUBLISHING ||
+    pp.status === PlatformPostStatus.AwaitingManual
   ) {
     return;
   }
@@ -117,6 +126,19 @@ async function publishSinglePlatform(job: Job<PlatformJobData>): Promise<void> {
       where: { id: postId },
       data: { status: PostStatus.Publishing },
     });
+  }
+
+  // Manual platforms (e.g. RedNote) have no posting API. Instead of calling an
+  // adapter or fetching a token, park this platform in "awaiting_manual" and
+  // return successfully. recomputePostStatus treats that as non-terminal, so the
+  // parent post stays in "publishing" until the merchant confirms from the post
+  // detail page. The BullMQ job completes here and is not retried.
+  if (isManualPlatform(platform)) {
+    await prisma.postPlatform.update({
+      where: { id: postPlatformId },
+      data: { status: PlatformPostStatus.AwaitingManual },
+    });
+    return;
   }
 
   // Mark this platform in-flight so a concurrent/retried job skips it.

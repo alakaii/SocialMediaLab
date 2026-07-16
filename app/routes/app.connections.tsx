@@ -21,7 +21,7 @@ import {
 import shopify from "../shopify.server.js";
 import { getBrands } from "../services/brand.server.js";
 import { deleteOAuthToken, getConnectedPlatforms } from "../services/oauth.server.js";
-import { PLATFORM_CONSTRAINTS } from "../utils/platformConstraints.js";
+import { PLATFORM_CONSTRAINTS, isManualPlatform } from "../utils/platformConstraints.js";
 import { Platform } from "../types/post.js";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
@@ -173,6 +173,7 @@ export default function Connections() {
                 <InlineStack gap="300" wrap>
                   {ALL_PLATFORMS.map((platform) => {
                     const c = PLATFORM_CONSTRAINTS[platform];
+                    const isManual = isManualPlatform(platform);
                     const isConnected = brand.connectedPlatforms.includes(platform);
                     const oauthUrl = `/api/oauth/${platform}?brandId=${brand.id}`;
 
@@ -189,10 +190,19 @@ export default function Connections() {
                         <BlockStack gap="300" inlineAlign="center">
                           <Text as="p" variant="headingXl">{c.icon}</Text>
                           <Text as="p" variant="bodyMd" fontWeight="semibold">{c.label}</Text>
-                          <Badge tone={isConnected ? "success" : undefined}>
-                            {isConnected ? "Connected" : "Not connected"}
-                          </Badge>
-                          {isConnected ? (
+                          {isManual ? (
+                            <Badge tone="info">Manual posting</Badge>
+                          ) : (
+                            <Badge tone={isConnected ? "success" : undefined}>
+                              {isConnected ? "Connected" : "Not connected"}
+                            </Badge>
+                          )}
+                          {isManual ? (
+                            <Text as="p" variant="bodySm" tone="subdued" alignment="center">
+                              No connection needed. The app preps your post at the
+                              scheduled time and you copy-paste it into the app.
+                            </Text>
+                          ) : isConnected ? (
                             <Button
                               size="slim"
                               tone="critical"
@@ -204,10 +214,6 @@ export default function Connections() {
                               }}
                             >
                               Disconnect
-                            </Button>
-                          ) : platform === Platform.RedNote ? (
-                            <Button size="slim" url={`/app/brands/${brand.id}`}>
-                              Set API Key
                             </Button>
                           ) : platform === Platform.Bluesky ? (
                             <Button

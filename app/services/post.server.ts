@@ -194,6 +194,110 @@ export async function updatePlatformContent(
   });
 }
 
+/**
+ * Platform-post statuses that are done and will not change on their own. Kept in
+ * sync with the same list in worker/processors/publishPost.ts. "awaiting_manual"
+ * is intentionally excluded so a post keeps a manual platform pending.
+ */
+const TERMINAL_PLATFORM_STATUSES: string[] = [
+  PlatformPostStatus.Published,
+  PlatformPostStatus.Failed,
+  PlatformPostStatus.Skipped,
+];
+
+/**
+ * Recompute the parent Post.status from its platform rows. This mirrors
+ * recomputePostStatus in worker/processors/publishPost.ts. That module
+ * instantiates its own PrismaClient and imports the adapters/token stack, so it
+ * is not cleanly importable into a Remix route; we replicate the small aggregate
+ * here against the shared app prisma client. Keep the two in sync.
+ */
+async function recomputePostStatus(postId: string): Promise<void> {
+  await prisma.$transaction(async (tx) => {
+    const post = await tx.post.findUnique({
+      where: { id: postId },
+      select: { id: true, status: true, platformPosts: { select: { status: true } } },
+    });
+    if (!post) return;
+    if (post.status === PostStatus.Cancelled) return;
+
+    const platforms = post.platformPosts;
+    if (platforms.length === 0) return;
+
+    const allTerminal = platforms.every((p) =>
+      TERMINAL_PLATFORM_STATUSES.includes(p.status),
+    );
+    if (!allTerminal) return; // work still outstanding (e.g. another manual platform)
+
+    const allFailed = platforms.every(
+      (p) => p.status === PlatformPostStatus.Failed,
+    );
+    const finalStatus = allFailed ? PostStatus.Failed : PostStatus.Published;
+
+    await tx.post.update({
+      where: { id: postId },
+      data: { status: finalStatus, publishedAt: new Date() },
+    });
+  });
+}
+
+/**
+ * Merchant confirms they manually posted a platform that was awaiting_manual.
+ * Marks it published and re-runs the parent status aggregate.
+ */
+export async function markPlatformPosted(
+  postId: string,
+  postPlatformId: string,
+  shop: string,
+) {
+  const post = await prisma.post.findFirst({
+    where: { id: postId, shop },
+    select: { id: true },
+  });
+  if (!post) throw new Error("Post not found");
+
+  await prisma.postPlatform.updateMany({
+    where: {
+      id: postPlatformId,
+      postId,
+      status: PlatformPostStatus.AwaitingManual,
+    },
+    data: {
+      status: PlatformPostStatus.Published,
+      publishedAt: new Date(),
+      errorMessage: null,
+    },
+  });
+
+  await recomputePostStatus(postId);
+}
+
+/**
+ * Merchant skips a platform that was awaiting_manual (chose not to post it).
+ */
+export async function skipPlatform(
+  postId: string,
+  postPlatformId: string,
+  shop: string,
+) {
+  const post = await prisma.post.findFirst({
+    where: { id: postId, shop },
+    select: { id: true },
+  });
+  if (!post) throw new Error("Post not found");
+
+  await prisma.postPlatform.updateMany({
+    where: {
+      id: postPlatformId,
+      postId,
+      status: PlatformPostStatus.AwaitingManual,
+    },
+    data: { status: PlatformPostStatus.Skipped },
+  });
+
+  await recomputePostStatus(postId);
+}
+
 export async function getUpcomingPosts(shop: string, days = 7) {
   const now = new Date();
   const end = new Date(now.getTime() + days * 24 * 60 * 60 * 1000);

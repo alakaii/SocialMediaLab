@@ -15,6 +15,10 @@ export interface PlatformConstraints {
   supportsAlbums?: boolean;
   supportsLinkPreview?: boolean;
   supportsPdf?: boolean;
+  // Manual platforms have no posting API. The app preps the content at the
+  // scheduled time and the merchant copy-pastes into the platform's own app,
+  // then confirms. No token connection is required to select these.
+  manual?: boolean;
   note?: string;
 }
 
@@ -81,14 +85,17 @@ export const PLATFORM_CONSTRAINTS: Record<Platform, PlatformConstraints> = {
     note: "Professional tone performs best. PDF carousels get high engagement.",
   },
   [Platform.RedNote]: {
-    label: "RedNote (小红书)",
+    label: "RedNote (小红书) - Manual posting",
     icon: "📕",
     maxChars: 1000,
     maxHashtags: 20,
-    supportedPostTypes: [PostType.Text, PostType.Image],
+    maxImages: 18,
+    maxVideos: 1,
+    supportedPostTypes: [PostType.Text, PostType.Image, PostType.Video],
     hashtagStyle: "note",
     aspectRatios: ["3:4", "1:1"],
-    note: "Use note-style storytelling with lifestyle context. Chinese content preferred.",
+    manual: true,
+    note: "Manual posting: RedNote has no posting API. At the scheduled time the app preps your caption and media, then you copy-paste into the RedNote app and confirm. Up to 1000 characters, 18 images, video supported. Note-style storytelling with lifestyle context works best; Chinese content preferred.",
   },
   [Platform.YouTubeShorts]: {
     label: "YouTube Shorts",
@@ -111,6 +118,22 @@ export const PLATFORM_CONSTRAINTS: Record<Platform, PlatformConstraints> = {
     note: "Links and mentions become clickable automatically. Video posting is not supported yet.",
   },
 };
+
+/**
+ * Platforms published by manual copy-paste rather than an API. At publish time
+ * the worker parks these in "awaiting_manual" instead of calling an adapter, and
+ * the UI shows a copy-and-confirm flow. Derived from the `manual` flag so adding
+ * a manual platform to PLATFORM_CONSTRAINTS is enough to extend the behavior.
+ */
+export const MANUAL_PLATFORMS: ReadonlySet<Platform> = new Set(
+  (Object.entries(PLATFORM_CONSTRAINTS) as [Platform, PlatformConstraints][])
+    .filter(([, c]) => c.manual)
+    .map(([p]) => p),
+);
+
+export function isManualPlatform(platform: Platform | string): boolean {
+  return MANUAL_PLATFORMS.has(platform as Platform);
+}
 
 export function getPlatformsForPostType(postType: PostType): Platform[] {
   return Object.entries(PLATFORM_CONSTRAINTS)
