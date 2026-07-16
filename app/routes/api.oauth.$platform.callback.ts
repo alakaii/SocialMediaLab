@@ -3,8 +3,14 @@ import { redirect } from "@remix-run/node";
 import axios from "axios";
 import shopify from "../shopify.server.js";
 import { prisma } from "../db.server.js";
-import { upsertOAuthToken, oauthStateCookie } from "../services/oauth.server.js";
+import {
+  upsertOAuthToken,
+  oauthStateCookie,
+  metaSelectionCookie,
+} from "../services/oauth.server.js";
 import type { OAuthState } from "../services/oauth.server.js";
+
+const META_GRAPH = "https://graph.facebook.com/v21.0";
 
 export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   const { session } = await shopify.authenticate.admin(request);
@@ -68,7 +74,8 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     case "instagram_feed":
     case "instagram_reels":
     case "facebook": {
-      const res = await axios.get("https://graph.facebook.com/v19.0/oauth/access_token", {
+      // 1. Exchange the authorization code for a short-lived user token.
+      const shortRes = await axios.get(`${META_GRAPH}/oauth/access_token`, {
         params: {
           client_id: process.env.META_APP_ID,
           client_secret: process.env.META_APP_SECRET,
@@ -76,13 +83,30 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
           code,
         },
       });
-      accessToken = res.data.access_token;
-      const me = await axios.get("https://graph.facebook.com/v19.0/me", {
-        params: { access_token: accessToken, fields: "id,name" },
+      const shortToken = shortRes.data.access_token as string;
+
+      // 2. Immediately exchange it for a long-lived user token. Page access
+      //    tokens derived from a long-lived user token do not expire.
+      const longRes = await axios.get(`${META_GRAPH}/oauth/access_token`, {
+        params: {
+          grant_type: "fb_exchange_token",
+          client_id: process.env.META_APP_ID,
+          client_secret: process.env.META_APP_SECRET,
+          fb_exchange_token: shortToken,
+        },
       });
-      accountId = me.data.id;
-      accountName = me.data.name;
-      break;
+      const longToken = longRes.data.access_token as string;
+
+      // 3. Do NOT store the user token as the final credential. Redirect to the
+      //    page-selection step, carrying the long-lived user token (plus brand
+      //    and platform) in a short-lived signed httpOnly cookie.
+      const headers = new Headers();
+      headers.append("Set-Cookie", await oauthStateCookie.serialize("", { maxAge: 0 }));
+      headers.append(
+        "Set-Cookie",
+        await metaSelectionCookie.serialize({ brandId, platform, userToken: longToken }),
+      );
+      return redirect("/app/connections/meta", { headers });
     }
 
     case "tiktok": {

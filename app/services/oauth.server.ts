@@ -95,6 +95,25 @@ export const oauthStateCookie = createCookie("oauth_state", {
   secrets: [process.env.SHOPIFY_API_SECRET ?? "dev-oauth-secret"],
 });
 
+// Meta (Facebook / Instagram) requires a page-selection step after OAuth: the
+// long-lived user token is carried to that step in this short-lived signed
+// cookie rather than being stored as a final credential. Mirrors the
+// oauthStateCookie pattern (signed with the Shopify API secret, httpOnly).
+export interface MetaSelectionState {
+  brandId: string;
+  platform: string;
+  userToken: string;
+}
+
+export const metaSelectionCookie = createCookie("meta_selection", {
+  httpOnly: true,
+  secure: process.env.NODE_ENV === "production",
+  sameSite: "lax",
+  path: "/",
+  maxAge: 600,
+  secrets: [process.env.SHOPIFY_API_SECRET ?? "dev-oauth-secret"],
+});
+
 function base64url(buf: Buffer): string {
   return buf.toString("base64url");
 }
@@ -147,7 +166,7 @@ export function buildOAuthUrl(
         `https://www.facebook.com/v19.0/dialog/oauth` +
           `?client_id=${process.env.META_APP_ID}` +
           `&redirect_uri=${encodeURIComponent(redirectUri)}` +
-          `&scope=${encodeURIComponent("pages_manage_posts,pages_read_engagement,instagram_basic,instagram_content_publish")}` +
+          `&scope=${encodeURIComponent("pages_show_list,pages_read_engagement,pages_manage_posts,instagram_basic,instagram_content_publish,business_management")}` +
           `&state=${state}` +
           `&response_type=code`,
       );
