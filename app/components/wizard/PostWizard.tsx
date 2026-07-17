@@ -1,4 +1,4 @@
-import { BlockStack, Button, InlineStack, ProgressBar, Text, Divider, Box } from "@shopify/polaris";
+import { Banner, BlockStack, Button, InlineStack, ProgressBar, Text, Divider, Box } from "@shopify/polaris";
 import { useFetcher } from "@remix-run/react";
 import { useWizardState, WIZARD_STEPS } from "../../hooks/useWizardState.js";
 import type { WizardState } from "../../types/post.js";
@@ -27,14 +27,17 @@ interface PostWizardProps {
 
 export function PostWizard({ brands, shop, initial }: PostWizardProps) {
   const { state, setState, step, next, back, canAdvance, setPlatformOverride } = useWizardState(initial);
-  const fetcher = useFetcher();
+  const fetcher = useFetcher<{ error?: string }>();
 
   const progressPct = ((step + 1) / WIZARD_STEPS.length) * 100;
 
   const selectedBrand = brands.find((b) => b.id === state.brandId);
   const connectedPlatforms = selectedBrand?.connectedPlatforms ?? [];
 
-  function submit(intent: "save-draft" | "schedule") {
+  const submitting = fetcher.state !== "idle";
+  const actionError = fetcher.data?.error;
+
+  function submit(intent: "save-draft" | "schedule" | "publish-now") {
     const formData = new FormData();
     formData.set("_intent", intent);
     formData.set("state", JSON.stringify(state));
@@ -104,6 +107,10 @@ export function PostWizard({ brands, shop, initial }: PostWizardProps) {
 
   return (
     <BlockStack gap="500">
+      {actionError && (
+        <Banner tone="critical">{actionError}</Banner>
+      )}
+
       {/* Step indicator */}
       <BlockStack gap="200">
         <InlineStack align="space-between">
@@ -131,17 +138,24 @@ export function PostWizard({ brands, shop, initial }: PostWizardProps) {
             <>
               <Button
                 onClick={() => submit("save-draft")}
-                loading={fetcher.state === "submitting"}
+                loading={submitting}
               >
-                Save Draft
+                Save draft
+              </Button>
+              <Button
+                variant="primary"
+                onClick={() => submit("publish-now")}
+                loading={submitting}
+              >
+                Publish now
               </Button>
               <Button
                 variant="primary"
                 onClick={() => submit("schedule")}
-                loading={fetcher.state === "submitting"}
+                loading={submitting}
                 disabled={!state.scheduledAt}
               >
-                Schedule Post
+                Schedule post
               </Button>
             </>
           ) : (

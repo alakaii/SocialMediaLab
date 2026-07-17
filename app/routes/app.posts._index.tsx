@@ -8,7 +8,7 @@ import { getShopSettings, updateHolidayCountry } from "../services/settings.serv
 import { getUpcomingHolidays, getCountryOptions } from "../services/holidays.server.js";
 import { StatusBadge } from "../components/shared/StatusBadge.js";
 import { PLATFORM_CONSTRAINTS } from "../utils/platformConstraints.js";
-import { PlatformPostStatus } from "../types/post.js";
+import { PlatformPostStatus, isPostEditable } from "../types/post.js";
 import type { Platform } from "../types/post.js";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
@@ -67,6 +67,12 @@ export default function PostsList() {
                   url={`/app/posts/${post.id}`}
                   name={post.mainContent.slice(0, 60)}
                   verticalAlignment="center"
+                  shortcutActions={
+                    isPostEditable(post.status)
+                      ? [{ content: "Edit", url: `/app/posts/${post.id}/edit` }]
+                      : undefined
+                  }
+                  persistActions
                 >
                   <InlineStack align="space-between" blockAlign="center">
                     <BlockStack gap="100">

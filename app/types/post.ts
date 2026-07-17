@@ -82,3 +82,23 @@ export const EMPTY_WIZARD_STATE: WizardState = {
   platformOverrides: {},
   product: null,
 };
+
+/**
+ * Post statuses a merchant is allowed to edit or publish-now. A draft has not
+ * been scheduled yet; a scheduled post has queued jobs we can still cancel and
+ * recompute. Once a post starts publishing (publishing/published/failed) or is
+ * cancelled, its content and platform set are frozen.
+ *
+ * Lives here (client-safe) rather than in post.server.ts so route components can
+ * decide whether to show Edit / Publish-now affordances without pulling the
+ * server-only service (prisma, queue) into the browser bundle. post.server.ts
+ * re-exports these for server-side use so there is a single source of truth.
+ */
+export const EDITABLE_POST_STATUSES: string[] = [
+  PostStatus.Draft,
+  PostStatus.Scheduled,
+];
+
+export function isPostEditable(status: string): boolean {
+  return EDITABLE_POST_STATUSES.includes(status);
+}

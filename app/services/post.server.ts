@@ -5,20 +5,11 @@ import { recordProductHashtags } from "./hashtag.server.js";
 import type { WizardState } from "../types/post.js";
 import { PostStatus, PlatformPostStatus } from "../types/post.js";
 
-/**
- * Post statuses a merchant is allowed to edit or publish-now. A draft has not
- * been scheduled yet; a scheduled post has queued jobs we can still cancel and
- * recompute. Once a post starts publishing (publishing/published/failed) or is
- * cancelled, its content and platform set are frozen.
- */
-export const EDITABLE_POST_STATUSES: string[] = [
-  PostStatus.Draft,
-  PostStatus.Scheduled,
-];
-
-export function isPostEditable(status: string): boolean {
-  return EDITABLE_POST_STATUSES.includes(status);
-}
+// Editability predicate lives in the client-safe types module so route
+// components can gate Edit / Publish-now UI without importing this server-only
+// service. Re-exported here for existing server-side call sites.
+import { EDITABLE_POST_STATUSES, isPostEditable } from "../types/post.js";
+export { EDITABLE_POST_STATUSES, isPostEditable };
 
 /**
  * Thrown when an edit or publish-now is attempted on a post that is no longer
@@ -158,6 +149,101 @@ export async function createAndSchedulePost(shop: string, wizard: WizardState) {
     await schedulePost(post.id, new Date(wizard.scheduledAt));
   }
   return post;
+}
+
+/**
+ * Publish a post immediately. Every still-pending platform row is enqueued to
+ * fire right now, with NO jitter (publish-now is exempt by design: the merchant
+ * asked for it to go out now, so we do not stagger it). Manual platforms (e.g.
+ * RedNote) land in awaiting_manual as soon as the worker picks them up, which is
+ * the correct immediate outcome for a platform with no posting API.
+ *
+ * Only rows still in "pending" are touched, which keeps this idempotent against
+ * double-submits and against a post whose queued jobs already started: a row the
+ * worker already moved to publishing/published/awaiting_manual is left alone.
+ * Any previously queued (jittered) jobs are removed first so nothing double-fires.
+ *
+ * Post.status is set the same way schedulePost sets it (Scheduled) so the worker
+ * performs its scheduled -> publishing transition; scheduledAt is set to now.
+ * Guards ownership and editability: throws PostNotEditableError if the post has
+ * left an editable state.
+ */
+export async function publishNow(postId: string, shop: string) {
+  const post = await prisma.post.findFirst({
+    where: { id: postId, shop },
+    select: { id: true, status: true, bullJobId: true },
+  });
+  if (!post) throw new Error("Post not found");
+  if (!isPostEditable(post.status)) throw new PostNotEditableError();
+
+  const now = new Date();
+
+  // Cancel any jobs already queued from a prior schedule so we never double-fire.
+  await removeAllJobsForPost(postId, post.bullJobId);
+
+  // Only rows still pending get a fresh immediate job. Rows the worker already
+  // advanced (publishing/published/failed/awaiting_manual/skipped) are left as-is.
+  const pending = await prisma.postPlatform.findMany({
+    where: { postId, status: PlatformPostStatus.Pending },
+    select: { id: true, platform: true },
+  });
+
+  for (const pp of pending) {
+    const job = await enqueuePlatformPost(
+      { postId, postPlatformId: pp.id, platform: pp.platform },
+      now, // no jitter: fire immediately
+    );
+    await prisma.postPlatform.update({
+      where: { id: pp.id },
+      data: {
+        publishAt: now,
+        status: PlatformPostStatus.Pending,
+        bullJobId: job.id?.toString() ?? null,
+      },
+    });
+  }
+
+  await prisma.post.update({
+    where: { id: postId },
+    data: {
+      status: PostStatus.Scheduled,
+      scheduledAt: now,
+      bullJobId: null,
+    },
+  });
+
+  return postId;
+}
+
+/**
+ * Return a post to draft: cancel any queued jobs and clear per-platform
+ * scheduling so nothing auto-publishes. Used when a merchant edits a scheduled
+ * post and saves it as a draft again (or saves a draft that stays a draft).
+ * Only pending rows are reset; an editable post should not have non-pending
+ * rows, but if a job fired mid-edit those rows are left untouched.
+ * Guards ownership and editability -> PostNotEditableError.
+ */
+export async function revertPostToDraft(postId: string, shop: string) {
+  const post = await prisma.post.findFirst({
+    where: { id: postId, shop },
+    select: { id: true, status: true, bullJobId: true },
+  });
+  if (!post) throw new Error("Post not found");
+  if (!isPostEditable(post.status)) throw new PostNotEditableError();
+
+  await removeAllJobsForPost(postId, post.bullJobId);
+
+  await prisma.postPlatform.updateMany({
+    where: { postId, status: PlatformPostStatus.Pending },
+    data: { publishAt: null, bullJobId: null },
+  });
+
+  await prisma.post.update({
+    where: { id: postId },
+    data: { status: PostStatus.Draft, bullJobId: null },
+  });
+
+  return postId;
 }
 
 /**

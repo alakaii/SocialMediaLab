@@ -5,7 +5,7 @@ import { Page, Layout, Card, Banner } from "@shopify/polaris";
 import shopify from "../shopify.server.js";
 import { getBrands } from "../services/brand.server.js";
 import { getConnectedPlatforms } from "../services/oauth.server.js";
-import { createPost, schedulePost } from "../services/post.server.js";
+import { createPost, schedulePost, publishNow } from "../services/post.server.js";
 import { PostWizard } from "../components/wizard/PostWizard.js";
 import type { WizardState } from "../types/post.js";
 import type { Platform } from "../types/post.js";
@@ -41,7 +41,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const shop = session.shop;
 
   const formData = await request.formData();
-  const intent = formData.get("_intent") as "save-draft" | "schedule";
+  const intent = formData.get("_intent") as "save-draft" | "schedule" | "publish-now";
   const stateJson = formData.get("state") as string;
   const wizard = JSON.parse(stateJson) as WizardState;
 
@@ -49,6 +49,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
   if (intent === "schedule" && wizard.scheduledAt) {
     await schedulePost(post.id, new Date(wizard.scheduledAt));
+  } else if (intent === "publish-now") {
+    await publishNow(post.id, shop);
   }
 
   return redirect(`/app/posts/${post.id}`);

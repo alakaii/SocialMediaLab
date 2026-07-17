@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { ActionFunctionArgs, LoaderFunctionArgs, SerializeFrom } from "@remix-run/node";
 import { json, redirect } from "@remix-run/node";
 import { useLoaderData, useFetcher } from "@remix-run/react";
@@ -16,20 +16,23 @@ import {
   TextField,
   Box,
   Link,
+  Modal,
 } from "@shopify/polaris";
 import shopify from "../shopify.server.js";
 import {
   getPost,
   cancelPost,
+  publishNow,
   markPlatformPosted,
   skipPlatform,
+  PostNotEditableError,
 } from "../services/post.server.js";
 import { StatusBadge } from "../components/shared/StatusBadge.js";
 import {
   PLATFORM_CONSTRAINTS,
   isManualPlatform,
 } from "../utils/platformConstraints.js";
-import { PostStatus, PlatformPostStatus } from "../types/post.js";
+import { PostStatus, PlatformPostStatus, isPostEditable } from "../types/post.js";
 import type { Platform } from "../types/post.js";
 
 export const loader = async ({ request, params }: LoaderFunctionArgs) => {
@@ -52,6 +55,25 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
   if (intent === "delete") {
     await cancelPost(params.id!, session.shop);
     return redirect("/app/posts");
+  }
+
+  if (intent === "publish-now") {
+    try {
+      await publishNow(params.id!, session.shop);
+      return json({ ok: true });
+    } catch (e) {
+      if (e instanceof PostNotEditableError) {
+        return json(
+          {
+            ok: false,
+            error:
+              "This post can no longer be published from here. It may have already started publishing.",
+          },
+          { status: 409 },
+        );
+      }
+      throw e;
+    }
   }
 
   if (intent === "mark-posted") {
@@ -248,29 +270,94 @@ function platformStatusBadge(status: string) {
 export default function PostDetail() {
   const { post } = useLoaderData<typeof loader>();
   const fetcher = useFetcher();
+  const publishFetcher = useFetcher<{ ok: boolean; error?: string }>();
 
+  const [publishModalOpen, setPublishModalOpen] = useState(false);
+
+  const editable = isPostEditable(post.status);
   const canCancel = post.status === PostStatus.Scheduled;
   const awaitingManual = post.platformPosts.filter(
     (pp) => pp.status === PlatformPostStatus.AwaitingManual,
   );
+
+  const publishing = publishFetcher.state !== "idle";
+  const publishError = publishFetcher.data?.error;
+  const publishSubmittedRef = useRef(false);
+
+  // Close the confirmation modal once a publish-now attempt settles, whether it
+  // succeeded (page revalidates to the new status) or failed (the error banner
+  // behind the modal becomes visible). The ref ensures we close exactly once per
+  // submission so the modal can still be reopened afterwards.
+  useEffect(() => {
+    if (publishFetcher.state === "idle" && publishSubmittedRef.current) {
+      publishSubmittedRef.current = false;
+      setPublishModalOpen(false);
+    }
+  }, [publishFetcher.state]);
+
+  const secondaryActions = [
+    ...(editable
+      ? [{ content: "Edit", url: `/app/posts/${post.id}/edit` }]
+      : []),
+    ...(canCancel
+      ? [
+          {
+            content: "Cancel post",
+            destructive: true,
+            onAction: () => {
+              fetcher.submit({ _intent: "cancel" }, { method: "POST" });
+            },
+          },
+        ]
+      : []),
+  ];
 
   return (
     <Page
       title="Post Detail"
       backAction={{ content: "Posts", url: "/app/posts" }}
       primaryAction={
-        canCancel
+        editable
           ? {
-              content: "Cancel Post",
-              destructive: true,
-              onAction: () => {
-                fetcher.submit({ _intent: "cancel" }, { method: "POST" });
-              },
+              content: "Publish now",
+              onAction: () => setPublishModalOpen(true),
             }
           : undefined
       }
+      secondaryActions={secondaryActions}
     >
+      <Modal
+        open={publishModalOpen}
+        onClose={() => setPublishModalOpen(false)}
+        title="Publish this post now?"
+        primaryAction={{
+          content: "Publish now",
+          loading: publishing,
+          onAction: () => {
+            publishSubmittedRef.current = true;
+            publishFetcher.submit({ _intent: "publish-now" }, { method: "POST" });
+          },
+        }}
+        secondaryActions={[
+          { content: "Cancel", onAction: () => setPublishModalOpen(false) },
+        ]}
+      >
+        <Modal.Section>
+          <Text as="p">
+            This sends the post to every platform right away. Platforms you post
+            manually will move to your action list so you can copy and paste them.
+            This cannot be undone.
+          </Text>
+        </Modal.Section>
+      </Modal>
+
       <Layout>
+        {publishError && (
+          <Layout.Section>
+            <Banner tone="critical">{publishError}</Banner>
+          </Layout.Section>
+        )}
+
         {awaitingManual.length > 0 && (
           <Layout.Section>
             <BlockStack gap="400">

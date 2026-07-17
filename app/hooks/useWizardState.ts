@@ -19,7 +19,11 @@ export function useWizardState(initial?: Partial<WizardState>) {
 
   function canAdvance(): boolean {
     switch (step) {
-      case 0: return state.scheduledAt !== null;
+      // Scheduling is optional: a post can be saved as a draft or published now
+      // without a chosen time. The Schedule action stays gated on its own button
+      // (disabled until a time is set), so this only unblocks the draft and
+      // publish-now paths.
+      case 0: return true;
       case 1: return state.brandId !== null;
       case 2: return state.postType !== null;
       case 3: return state.platforms.length > 0;
