@@ -1,8 +1,10 @@
-import { Banner, BlockStack, Button, InlineStack, ProgressBar, Text, Divider, Box } from "@shopify/polaris";
+import { useMemo } from "react";
+import { Banner, BlockStack, Button, InlineStack, ProgressBar, Text, Divider } from "@shopify/polaris";
 import { useFetcher } from "@remix-run/react";
 import { useWizardState, WIZARD_STEPS } from "../../hooks/useWizardState.js";
-import type { WizardState } from "../../types/post.js";
+import type { WizardState, PostType } from "../../types/post.js";
 import { Platform } from "../../types/post.js";
+import { getPlatformsForPostType } from "../../utils/platformConstraints.js";
 
 import { StepSchedule } from "./StepSchedule.js";
 import { StepBrand } from "./StepBrand.js";
@@ -11,12 +13,18 @@ import { StepPlatforms } from "./StepPlatforms.js";
 import { StepContent } from "./StepContent.js";
 import { StepPlatformAdjust } from "./StepPlatformAdjust.js";
 
+export interface WizardAccount {
+  id: string;
+  platform: Platform;
+  accountName: string | null;
+}
+
 interface Brand {
   id: string;
   name: string;
   logoUrl?: string | null;
   timezone: string;
-  connectedPlatforms: Platform[];
+  accounts: WizardAccount[];
 }
 
 interface PostWizardProps {
@@ -32,7 +40,36 @@ export function PostWizard({ brands, shop, initial }: PostWizardProps) {
   const progressPct = ((step + 1) / WIZARD_STEPS.length) * 100;
 
   const selectedBrand = brands.find((b) => b.id === state.brandId);
-  const connectedPlatforms = selectedBrand?.connectedPlatforms ?? [];
+  const brandAccounts = selectedBrand?.accounts ?? [];
+
+  // Every account across brands, so account ids in the wizard state can be
+  // mapped back to their platform (for the adjust step and derived selections).
+  const accountsById = useMemo(() => {
+    const map = new Map<string, WizardAccount>();
+    for (const b of brands) for (const a of b.accounts) map.set(a.id, a);
+    return map;
+  }, [brands]);
+
+  // Distinct platforms this post targets: platforms of the selected accounts
+  // plus the selected manual platforms. Drives the per-platform adjust step.
+  const selectedPlatforms = useMemo(() => {
+    const set = new Set<Platform>();
+    for (const id of state.selectedAccountIds) {
+      const acct = accountsById.get(id);
+      if (acct) set.add(acct.platform);
+    }
+    for (const p of state.manualPlatforms) set.add(p);
+    return [...set];
+  }, [state.selectedAccountIds, state.manualPlatforms, accountsById]);
+
+  // Accounts to pre-check when a brand or post type changes: every account of
+  // the chosen brand whose platform is compatible with the chosen post type.
+  function preCheckedAccountIds(brandId: string | null, postType: PostType | null): string[] {
+    const brand = brands.find((b) => b.id === brandId);
+    if (!brand || !postType) return [];
+    const compatible = new Set(getPlatformsForPostType(postType));
+    return brand.accounts.filter((a) => compatible.has(a.platform)).map((a) => a.id);
+  }
 
   const submitting = fetcher.state !== "idle";
   const actionError = fetcher.data?.error;
@@ -56,25 +93,44 @@ export function PostWizard({ brands, shop, initial }: PostWizardProps) {
       case 1:
         return (
           <StepBrand
-            brands={brands.map((b) => ({ ...b, connectedPlatforms: b.connectedPlatforms }))}
+            brands={brands}
             selectedId={state.brandId}
-            onChange={(brandId) => setState((s) => ({ ...s, brandId, platforms: [] }))}
+            onChange={(brandId) =>
+              setState((s) => ({
+                ...s,
+                brandId,
+                // Pre-check the new brand's compatible accounts; drop manual
+                // selections so they are re-confirmed against the brand context.
+                selectedAccountIds: preCheckedAccountIds(brandId, s.postType),
+                manualPlatforms: [],
+              }))
+            }
           />
         );
       case 2:
         return (
           <StepPostType
             selected={state.postType}
-            onChange={(postType) => setState((s) => ({ ...s, postType, platforms: [] }))}
+            onChange={(postType) =>
+              setState((s) => ({
+                ...s,
+                postType,
+                // Post type changes compatibility, so re-derive selections.
+                selectedAccountIds: preCheckedAccountIds(s.brandId, postType),
+                manualPlatforms: [],
+              }))
+            }
           />
         );
       case 3:
         return (
           <StepPlatforms
             postType={state.postType!}
-            connectedPlatforms={connectedPlatforms}
-            selected={state.platforms}
-            onChange={(platforms) => setState((s) => ({ ...s, platforms }))}
+            accounts={brandAccounts}
+            selectedAccountIds={state.selectedAccountIds}
+            manualPlatforms={state.manualPlatforms}
+            onAccountsChange={(selectedAccountIds) => setState((s) => ({ ...s, selectedAccountIds }))}
+            onManualChange={(manualPlatforms) => setState((s) => ({ ...s, manualPlatforms }))}
           />
         );
       case 4:
@@ -93,7 +149,7 @@ export function PostWizard({ brands, shop, initial }: PostWizardProps) {
       case 5:
         return (
           <StepPlatformAdjust
-            platforms={state.platforms}
+            platforms={selectedPlatforms}
             mainContent={state.mainContent}
             mediaAssets={state.mediaAssets}
             overrides={state.platformOverrides}

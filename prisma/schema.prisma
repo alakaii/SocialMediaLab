@@ -26,37 +26,57 @@ model Session {
 }
 
 model Brand {
-  id          String   @id @default(cuid())
-  shop        String
-  name        String
-  logoUrl     String?
-  timezone    String   @default("UTC")
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id        String   @id @default(cuid())
+  shop      String
+  name      String
+  logoUrl   String?
+  timezone  String   @default("UTC")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  posts       Post[]
-  oauthTokens OAuthToken[]
+  posts          Post[]
+  socialAccounts BrandSocialAccount[]
 
   @@index([shop])
 }
 
-model OAuthToken {
+// A social media account connected at the shop level. One physical account
+// (e.g. a Facebook page or Bluesky handle) is stored once per shop and can be
+// shared across brands via BrandSocialAccount. Token columns are encrypted at
+// rest by crypto.server; the same encrypted strings can be reused across brands.
+model SocialAccount {
   id           String    @id @default(cuid())
-  brandId      String
+  shop         String
   platform     String
+  accountId    String
+  accountName  String?
   accessToken  String
   refreshToken String?
   tokenSecret  String?
   expiresAt    DateTime?
-  accountId    String
-  accountName  String?
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
 
-  brand        Brand     @relation(fields: [brandId], references: [id], onDelete: Cascade)
+  brandLinks    BrandSocialAccount[]
+  platformPosts PostPlatform[]
 
-  @@unique([brandId, platform])
+  @@unique([shop, platform, accountId])
+  @@index([shop])
+}
+
+// Join table letting multiple brands share a single shop-level SocialAccount
+// (e.g. a parent-company page that also appears on a child brand).
+model BrandSocialAccount {
+  id              String @id @default(cuid())
+  brandId         String
+  socialAccountId String
+
+  brand         Brand         @relation(fields: [brandId], references: [id], onDelete: Cascade)
+  socialAccount SocialAccount @relation(fields: [socialAccountId], references: [id], onDelete: Cascade)
+
+  @@unique([brandId, socialAccountId])
   @@index([brandId])
+  @@index([socialAccountId])
 }
 
 model Post {
@@ -77,8 +97,8 @@ model Post {
   productTitle  String?
   productUrl    String?
 
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   brand         Brand          @relation(fields: [brandId], references: [id])
   platformPosts PostPlatform[]
@@ -91,24 +111,33 @@ model Post {
 }
 
 model PostPlatform {
-  id             String    @id @default(cuid())
-  postId         String
-  platform       String
-  content        String?
-  extraJson      String?
-  status         String    @default("pending")
-  platformPostId String?
-  errorMessage   String?
-  bullJobId      String?
-  publishAt      DateTime?
-  publishedAt    DateTime?
-  createdAt      DateTime  @default(now())
-  updatedAt      DateTime  @updatedAt
+  id              String    @id @default(cuid())
+  postId          String
+  platform        String
+  // Null for manual platforms (e.g. rednote) which have no connected account.
+  // A post may target two accounts on the SAME platform (two Facebook pages),
+  // so rows are keyed by socialAccountId rather than platform.
+  socialAccountId String?
+  content         String?
+  extraJson       String?
+  status          String    @default("pending")
+  platformPostId  String?
+  errorMessage    String?
+  bullJobId       String?
+  publishAt       DateTime?
+  publishedAt     DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
 
-  post           Post      @relation(fields: [postId], references: [id], onDelete: Cascade)
+  post          Post           @relation(fields: [postId], references: [id], onDelete: Cascade)
+  socialAccount SocialAccount? @relation(fields: [socialAccountId], references: [id], onDelete: SetNull)
 
-  @@unique([postId, platform])
+  // Postgres treats NULLs as distinct, so multiple manual rows (null account)
+  // are allowed by the DB; the service layer enforces at most one manual row
+  // per platform per post.
+  @@unique([postId, socialAccountId])
   @@index([postId])
+  @@index([socialAccountId])
 }
 
 model ShopSettings {
@@ -132,7 +161,7 @@ model MediaAsset {
   sortOrder   Int      @default(0)
   createdAt   DateTime @default(now())
 
-  post        Post     @relation(fields: [postId], references: [id], onDelete: Cascade)
+  post Post @relation(fields: [postId], references: [id], onDelete: Cascade)
 
   @@index([postId])
 }

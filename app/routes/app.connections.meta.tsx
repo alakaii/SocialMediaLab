@@ -17,7 +17,8 @@ import {
 import shopify from "../shopify.server.js";
 import { prisma } from "../db.server.js";
 import {
-  upsertOAuthToken,
+  upsertSocialAccount,
+  associateAccountWithBrand,
   metaSelectionCookie,
 } from "../services/oauth.server.js";
 import type { MetaSelectionState } from "../services/oauth.server.js";
@@ -123,14 +124,15 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
   if (platform === "facebook") {
     // Page access tokens from a long-lived user token do not expire, so leave
-    // expiresAt undefined.
-    await upsertOAuthToken({
-      brandId,
+    // expiresAt undefined. Stored at the shop level, then linked to the brand.
+    const account = await upsertSocialAccount({
+      shop: session.shop,
       platform,
-      accessToken: page.access_token,
       accountId: page.id,
       accountName: page.name,
+      accessToken: page.access_token,
     });
+    await associateAccountWithBrand(account.id, brandId);
   } else {
     const ig = page.instagram_business_account;
     if (!ig) {
@@ -139,14 +141,15 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         { status: 400 },
       );
     }
-    await upsertOAuthToken({
-      brandId,
+    const account = await upsertSocialAccount({
+      shop: session.shop,
       platform,
-      accessToken: page.access_token,
       accountId: ig.id,
       accountName: ig.username ?? page.name,
+      accessToken: page.access_token,
       tokenSecret: page.id,
     });
+    await associateAccountWithBrand(account.id, brandId);
   }
 
   return redirect("/app/connections", {

@@ -2,8 +2,78 @@ import { prisma } from "../db.server.js";
 import { enqueuePlatformPost, removeJob } from "../queue.server.js";
 import { jitteredPublishAt } from "../utils/jitter.js";
 import { recordProductHashtags } from "./hashtag.server.js";
-import type { WizardState } from "../types/post.js";
+import type { WizardState, Platform } from "../types/post.js";
 import { PostStatus, PlatformPostStatus } from "../types/post.js";
+
+/**
+ * A PostPlatform row derived from a wizard state, before it is persisted.
+ * socialAccountId is null for manual platforms (e.g. rednote).
+ */
+interface DesiredPlatformRow {
+  platform: string;
+  socialAccountId: string | null;
+  content: string | null;
+  extraJson: string | null;
+}
+
+/**
+ * Build the PostPlatform rows a wizard state implies: one row per selected
+ * account (socialAccountId + the account's platform) and one per manual platform
+ * (socialAccountId null). Selected accounts are validated against the shop so a
+ * merchant can never attach another shop's account. Duplicate accounts and
+ * duplicate manual platforms are collapsed here so the per-post uniqueness rules
+ * hold: at most one row per account, and at most one manual row per platform.
+ * Per-platform content/settings overrides are keyed by platform and applied to
+ * every account row of that platform.
+ */
+async function resolvePlatformRows(
+  shop: string,
+  wizard: WizardState,
+): Promise<DesiredPlatformRow[]> {
+  const accountIds = [...new Set(wizard.selectedAccountIds)];
+  const accounts = accountIds.length
+    ? await prisma.socialAccount.findMany({
+        where: { id: { in: accountIds }, shop },
+        select: { id: true, platform: true },
+      })
+    : [];
+
+  const rows: DesiredPlatformRow[] = accounts.map((a) => {
+    const override = wizard.platformOverrides[a.platform as Platform];
+    return {
+      platform: a.platform,
+      socialAccountId: a.id,
+      content: override?.content ?? null,
+      extraJson: override?.extra ? JSON.stringify(override.extra) : null,
+    };
+  });
+
+  for (const platform of [...new Set(wizard.manualPlatforms)]) {
+    const override = wizard.platformOverrides[platform];
+    rows.push({
+      platform,
+      socialAccountId: null,
+      content: override?.content ?? null,
+      extraJson: override?.extra ? JSON.stringify(override.extra) : null,
+    });
+  }
+
+  return rows;
+}
+
+/**
+ * Stable key for reconciling a platform row: account rows are keyed by account
+ * id (so a post can target two accounts on the same platform), manual rows by
+ * their platform (at most one per platform).
+ */
+function platformRowKey(row: {
+  socialAccountId: string | null;
+  platform: string;
+}): string {
+  return row.socialAccountId
+    ? `acct:${row.socialAccountId}`
+    : `manual:${row.platform}`;
+}
 
 // Editability predicate lives in the client-safe types module so route
 // components can gate Edit / Publish-now UI without importing this server-only
@@ -44,7 +114,12 @@ export async function getPost(id: string, shop: string) {
     where: { id, shop },
     include: {
       brand: true,
-      platformPosts: true,
+      platformPosts: {
+        include: {
+          // Only the display name of the target account, never its tokens.
+          socialAccount: { select: { accountName: true, accountId: true } },
+        },
+      },
       mediaAssets: { orderBy: { sortOrder: "asc" } },
     },
   });
@@ -52,6 +127,7 @@ export async function getPost(id: string, shop: string) {
 
 export async function createPost(shop: string, wizard: WizardState) {
   const product = wizard.product ?? null;
+  const platformRows = await resolvePlatformRows(shop, wizard);
   const post = await prisma.post.create({
     data: {
       shop,
@@ -65,14 +141,12 @@ export async function createPost(shop: string, wizard: WizardState) {
       productTitle: product?.title ?? null,
       productUrl: product?.url ?? null,
       platformPosts: {
-        create: wizard.platforms.map((platform) => {
-          const override = wizard.platformOverrides[platform];
-          return {
-            platform,
-            content: override?.content ?? null,
-            extraJson: override?.extra ? JSON.stringify(override.extra) : null,
-          };
-        }),
+        create: platformRows.map((r) => ({
+          platform: r.platform,
+          socialAccountId: r.socialAccountId,
+          content: r.content,
+          extraJson: r.extraJson,
+        })),
       },
       mediaAssets: {
         create: wizard.mediaAssets.map((asset, i) => ({
@@ -110,7 +184,7 @@ export async function schedulePost(postId: string, scheduledAt: Date) {
   // same formulaic second. Keep Post.scheduledAt as the user's chosen time.
   const platformPosts = await prisma.postPlatform.findMany({
     where: { postId },
-    select: { id: true, platform: true },
+    select: { id: true, platform: true, socialAccountId: true },
   });
 
   // One BullMQ job per platform, each delayed to that platform's own jittered
@@ -120,7 +194,12 @@ export async function schedulePost(postId: string, scheduledAt: Date) {
   for (const pp of platformPosts) {
     const publishAt = jitteredPublishAt(scheduledAt, now);
     const job = await enqueuePlatformPost(
-      { postId, postPlatformId: pp.id, platform: pp.platform },
+      {
+        postId,
+        postPlatformId: pp.id,
+        platform: pp.platform,
+        socialAccountId: pp.socialAccountId,
+      },
       publishAt,
     );
     await prisma.postPlatform.update({
@@ -185,12 +264,17 @@ export async function publishNow(postId: string, shop: string) {
   // advanced (publishing/published/failed/awaiting_manual/skipped) are left as-is.
   const pending = await prisma.postPlatform.findMany({
     where: { postId, status: PlatformPostStatus.Pending },
-    select: { id: true, platform: true },
+    select: { id: true, platform: true, socialAccountId: true },
   });
 
   for (const pp of pending) {
     const job = await enqueuePlatformPost(
-      { postId, postPlatformId: pp.id, platform: pp.platform },
+      {
+        postId,
+        postPlatformId: pp.id,
+        platform: pp.platform,
+        socialAccountId: pp.socialAccountId,
+      },
       now, // no jitter: fire immediately
     );
     await prisma.postPlatform.update({
@@ -264,7 +348,14 @@ export async function updatePost(postId: string, shop: string, wizard: WizardSta
   const existing = await prisma.post.findFirst({
     where: { id: postId, shop },
     include: {
-      platformPosts: { select: { id: true, platform: true, bullJobId: true } },
+      platformPosts: {
+        select: {
+          id: true,
+          platform: true,
+          socialAccountId: true,
+          bullJobId: true,
+        },
+      },
     },
   });
   if (!existing) throw new Error("Post not found");
@@ -286,36 +377,43 @@ export async function updatePost(postId: string, shop: string, wizard: WizardSta
     },
   });
 
-  // Reconcile platform rows against the new selection.
-  const existingByPlatform = new Map(
-    existing.platformPosts.map((pp) => [pp.platform, pp] as const),
+  // Reconcile platform rows against the new selection. Rows are matched by
+  // account id (account rows) or platform (manual rows) so an unchanged target
+  // keeps its row (and thus its status, publishAt, and queued job) rather than
+  // being deleted and recreated.
+  const desiredRows = await resolvePlatformRows(shop, wizard);
+  const existingByKey = new Map(
+    existing.platformPosts.map((pp) => [platformRowKey(pp), pp] as const),
   );
-  const desired = new Set<string>(wizard.platforms);
+  const desiredKeys = new Set(desiredRows.map(platformRowKey));
 
-  // Remove platforms no longer selected; cancel any queued job first so it does
-  // not fire against a row we are about to delete.
+  // Remove rows no longer selected; cancel any queued job first so it does not
+  // fire against a row we are about to delete.
   for (const pp of existing.platformPosts) {
-    if (!desired.has(pp.platform)) {
+    if (!desiredKeys.has(platformRowKey(pp))) {
       if (pp.bullJobId) await removeJob(pp.bullJobId);
       await prisma.postPlatform.delete({ where: { id: pp.id } });
     }
   }
 
-  // Add newly selected platforms and update per-platform content on kept rows.
-  for (const platform of wizard.platforms) {
-    const override = wizard.platformOverrides[platform];
-    const content = override?.content ?? null;
-    const extraJson = override?.extra ? JSON.stringify(override.extra) : null;
-    const current = existingByPlatform.get(platform);
+  // Add newly selected targets and update per-platform content on kept rows.
+  for (const r of desiredRows) {
+    const current = existingByKey.get(platformRowKey(r));
     if (current) {
-      // Unchanged platform: update its content but preserve status/publishAt/job.
+      // Kept target: update its content but preserve status/publishAt/job.
       await prisma.postPlatform.update({
         where: { id: current.id },
-        data: { content, extraJson },
+        data: { content: r.content, extraJson: r.extraJson },
       });
     } else {
       await prisma.postPlatform.create({
-        data: { postId, platform, content, extraJson },
+        data: {
+          postId,
+          platform: r.platform,
+          socialAccountId: r.socialAccountId,
+          content: r.content,
+          extraJson: r.extraJson,
+        },
       });
     }
   }

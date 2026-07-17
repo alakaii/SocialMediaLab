@@ -61,8 +61,10 @@ export default function BrandsList() {
                     <Text as="p" variant="bodyMd" fontWeight="semibold">{brand.name}</Text>
                     <InlineStack gap="100">
                       <Text as="p" variant="bodySm" tone="subdued">{brand.timezone}</Text>
-                      {brand.oauthTokens.map((t) => (
-                        <Badge key={t.platform} size="small">{t.platform}</Badge>
+                      {brand.socialAccounts.map((link, i) => (
+                        <Badge key={i} size="small">
+                          {link.socialAccount.accountName ?? link.socialAccount.platform}
+                        </Badge>
                       ))}
                     </InlineStack>
                   </BlockStack>

@@ -26,7 +26,11 @@ export function useWizardState(initial?: Partial<WizardState>) {
       case 0: return true;
       case 1: return state.brandId !== null;
       case 2: return state.postType !== null;
-      case 3: return state.platforms.length > 0;
+      case 3:
+        return (
+          state.selectedAccountIds.length > 0 ||
+          state.manualPlatforms.length > 0
+        );
       case 4: return state.mainContent.trim().length > 0;
       default: return true;
     }

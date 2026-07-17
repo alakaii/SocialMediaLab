@@ -1,6 +1,6 @@
 import axios from "axios";
-import type { OAuthToken } from "@prisma/client";
-import { getOAuthToken, upsertOAuthToken } from "./oauth.server.js";
+import type { SocialAccount } from "@prisma/client";
+import { getSocialAccount, upsertSocialAccount } from "./oauth.server.js";
 
 // Refresh when the stored token expires within this window (or has already expired).
 const REFRESH_WINDOW_MS = 5 * 60 * 1000;
@@ -61,53 +61,55 @@ async function refreshPlatformToken(
   }
 }
 
-// Returns a decrypted OAuthToken with a valid access token, refreshing and
-// persisting it first when it is close to expiry.
+// Returns a decrypted SocialAccount with a valid access token, refreshing and
+// persisting it first when it is close to expiry. Keyed by account id now that
+// accounts are shop-level and shared across brands.
 export async function getFreshToken(
-  brandId: string,
-  platform: string,
-): Promise<OAuthToken> {
-  const token = await getOAuthToken(brandId, platform);
-  if (!token) {
-    throw new Error(`No OAuth token for platform: ${platform}`);
+  socialAccountId: string,
+): Promise<SocialAccount> {
+  const account = await getSocialAccount(socialAccountId);
+  if (!account) {
+    throw new Error(`No connected account: ${socialAccountId}`);
   }
 
-  const needsRefresh =
-    token.expiresAt != null &&
-    token.expiresAt.getTime() - Date.now() < REFRESH_WINDOW_MS;
+  const platform = account.platform;
 
-  if (!needsRefresh || !token.refreshToken) {
-    return token;
+  const needsRefresh =
+    account.expiresAt != null &&
+    account.expiresAt.getTime() - Date.now() < REFRESH_WINDOW_MS;
+
+  if (!needsRefresh || !account.refreshToken) {
+    return account;
   }
 
   let refreshed: RefreshResult | null;
   try {
-    refreshed = await refreshPlatformToken(platform, token.refreshToken);
+    refreshed = await refreshPlatformToken(platform, account.refreshToken);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     throw new Error(`Token refresh failed for ${platform}: ${message}`);
   }
 
   if (!refreshed) {
-    return token;
+    return account;
   }
 
-  const newRefreshToken = refreshed.refreshToken ?? token.refreshToken;
-  const newExpiresAt = refreshed.expiresAt ?? token.expiresAt ?? undefined;
+  const newRefreshToken = refreshed.refreshToken ?? account.refreshToken;
+  const newExpiresAt = refreshed.expiresAt ?? account.expiresAt ?? undefined;
 
-  await upsertOAuthToken({
-    brandId,
+  await upsertSocialAccount({
+    shop: account.shop,
     platform,
+    accountId: account.accountId,
+    accountName: account.accountName ?? undefined,
     accessToken: refreshed.accessToken,
     refreshToken: newRefreshToken,
-    tokenSecret: token.tokenSecret ?? undefined,
+    tokenSecret: account.tokenSecret ?? undefined,
     expiresAt: newExpiresAt,
-    accountId: token.accountId,
-    accountName: token.accountName ?? undefined,
   });
 
   return {
-    ...token,
+    ...account,
     accessToken: refreshed.accessToken,
     refreshToken: newRefreshToken,
     expiresAt: newExpiresAt ?? null,

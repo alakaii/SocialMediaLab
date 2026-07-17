@@ -13,6 +13,10 @@ interface PlatformJobData {
   postId: string;
   postPlatformId: string;
   platform: string;
+  // Added by the shop-level-accounts refactor. Older jobs enqueued before the
+  // refactor omit it; those resolve the account from the PostPlatform row or the
+  // post's brand instead (see resolveSocialAccountId).
+  socialAccountId?: string | null;
 }
 
 interface LegacyJobData {
@@ -21,6 +25,23 @@ interface LegacyJobData {
 }
 
 type JobData = PlatformJobData | LegacyJobData;
+
+/**
+ * Resolve which shop-level account a platform row should publish to when the row
+ * itself has no socialAccountId (a pre-refactor row, or a job enqueued before the
+ * column existed). Picks the account the post's brand is linked to for the given
+ * platform. Returns null if the brand has no linked account for it.
+ */
+async function resolveSocialAccountId(
+  brandId: string,
+  platform: string,
+): Promise<string | null> {
+  const link = await prisma.brandSocialAccount.findFirst({
+    where: { brandId, socialAccount: { is: { platform } } },
+    select: { socialAccountId: true },
+  });
+  return link?.socialAccountId ?? null;
+}
 
 // In-flight platform status. PlatformPostStatus has no "publishing" member and
 // its type module is out of scope to edit, but the DB column is a free String,
@@ -141,6 +162,29 @@ async function publishSinglePlatform(job: Job<PlatformJobData>): Promise<void> {
     return;
   }
 
+  // Resolve the shop-level account to publish to. The row's own socialAccountId
+  // is the source of truth; fall back to the job's hint, then to the post's
+  // brand's linked account for this platform (covers pre-refactor jobs/rows).
+  const socialAccountId =
+    pp.socialAccountId ??
+    job.data.socialAccountId ??
+    (await resolveSocialAccountId(post.brandId, platform));
+
+  if (!socialAccountId) {
+    // No account can be resolved (e.g. it was disconnected). Fail with a clear
+    // message and do NOT throw: retrying will not help until the merchant
+    // reconnects the account and reschedules.
+    await prisma.postPlatform.update({
+      where: { id: postPlatformId },
+      data: {
+        status: PlatformPostStatus.Failed,
+        errorMessage: `No connected account for ${platform}. Reconnect it on the Connections page, then reschedule this post.`,
+      },
+    });
+    await recomputePostStatus(postId);
+    return;
+  }
+
   // Mark this platform in-flight so a concurrent/retried job skips it.
   await prisma.postPlatform.update({
     where: { id: postPlatformId },
@@ -151,7 +195,7 @@ async function publishSinglePlatform(job: Job<PlatformJobData>): Promise<void> {
     const adapter = getAdapter(platform);
 
     // Decrypts the stored token and refreshes it in place if near expiry.
-    const token = await getFreshToken(post.brandId, platform);
+    const token = await getFreshToken(socialAccountId);
 
     const content = pp.content ?? post.mainContent;
     const extra = pp.extraJson
@@ -229,8 +273,18 @@ async function publishAllPlatformsLegacy(job: Job<LegacyJobData>): Promise<void>
       const platform = pp.platform as Platform;
       const adapter = getAdapter(platform);
 
+      // Resolve the account the same way the per-platform path does.
+      const socialAccountId =
+        pp.socialAccountId ??
+        (await resolveSocialAccountId(post.brandId, platform));
+      if (!socialAccountId) {
+        throw new Error(
+          `No connected account for ${platform}. Reconnect it on the Connections page.`,
+        );
+      }
+
       // Decrypts the stored token and refreshes it in place if near expiry.
-      const token = await getFreshToken(post.brandId, platform);
+      const token = await getFreshToken(socialAccountId);
 
       const content = pp.content ?? post.mainContent;
       const extra = pp.extraJson ? (JSON.parse(pp.extraJson) as Record<string, unknown>) : {};

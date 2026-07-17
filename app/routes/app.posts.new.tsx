@@ -4,7 +4,7 @@ import { useLoaderData } from "@remix-run/react";
 import { Page, Layout, Card, Banner } from "@shopify/polaris";
 import shopify from "../shopify.server.js";
 import { getBrands } from "../services/brand.server.js";
-import { getConnectedPlatforms } from "../services/oauth.server.js";
+import { getAccountsForBrand } from "../services/oauth.server.js";
 import { createPost, schedulePost, publishNow } from "../services/post.server.js";
 import { PostWizard } from "../components/wizard/PostWizard.js";
 import type { WizardState } from "../types/post.js";
@@ -21,7 +21,11 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       name: b.name,
       logoUrl: b.logoUrl,
       timezone: b.timezone,
-      connectedPlatforms: (await getConnectedPlatforms(b.id)) as Platform[],
+      accounts: (await getAccountsForBrand(b.id)).map((a) => ({
+        id: a.id,
+        platform: a.platform as Platform,
+        accountName: a.accountName,
+      })),
     })),
   );
 

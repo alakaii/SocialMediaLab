@@ -42,9 +42,16 @@ export interface WizardState {
   scheduledAt: string | null; // ISO string
   brandId: string | null;
   postType: PostType | null;
-  platforms: Platform[];
+  // Shop-level accounts (by id) this post publishes to. A post may target two
+  // accounts on the same platform (e.g. two Facebook pages).
+  selectedAccountIds: string[];
+  // Manual platforms (e.g. rednote) selected for this post. These have no
+  // connected account, so they are tracked by platform key rather than account.
+  manualPlatforms: Platform[];
   mainContent: string;
   mediaAssets: WizardMediaAsset[];
+  // Per-platform content/settings overrides, keyed by platform. An override
+  // applies to every row of that platform (all accounts share the override).
   platformOverrides: Partial<Record<Platform, PlatformOverride>>;
   product: LinkedProduct | null;
 }
@@ -76,7 +83,8 @@ export const EMPTY_WIZARD_STATE: WizardState = {
   scheduledAt: null,
   brandId: null,
   postType: null,
-  platforms: [],
+  selectedAccountIds: [],
+  manualPlatforms: [],
   mainContent: "",
   mediaAssets: [],
   platformOverrides: {},

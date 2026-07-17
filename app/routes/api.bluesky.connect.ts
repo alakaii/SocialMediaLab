@@ -3,15 +3,16 @@ import { json } from "@remix-run/node";
 import { AtpAgent } from "@atproto/api";
 import shopify from "../shopify.server.js";
 import { prisma } from "../db.server.js";
-import { upsertOAuthToken } from "../services/oauth.server.js";
+import { upsertSocialAccount, associateAccountWithBrand } from "../services/oauth.server.js";
 import { Platform } from "../types/post.js";
 
 const BLUESKY_SERVICE = "https://bsky.social";
 
 // Connects a Bluesky account using an app password (Bluesky does not use OAuth).
-// Verifies the credentials by logging in, then stores them via upsertOAuthToken:
-//   accessToken = app password, tokenSecret = handle, accountId = DID,
-//   accountName = handle. Tokens are encrypted transparently by oauth.server.
+// Verifies the credentials by logging in, then stores them as a shop-level
+// account via upsertSocialAccount (accessToken = app password, tokenSecret =
+// handle, accountId = DID, accountName = handle) and links it to the brand the
+// merchant started from. Tokens are encrypted transparently by oauth.server.
 export const action = async ({ request }: ActionFunctionArgs) => {
   const { session } = await shopify.authenticate.admin(request);
 
@@ -63,14 +64,15 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     );
   }
 
-  await upsertOAuthToken({
-    brandId,
+  const account = await upsertSocialAccount({
+    shop: session.shop,
     platform: Platform.Bluesky,
-    accessToken: appPassword,
-    tokenSecret: handle,
     accountId: did,
     accountName: handle,
+    accessToken: appPassword,
+    tokenSecret: handle,
   });
+  await associateAccountWithBrand(account.id, brandId);
 
   return json({ ok: true });
 };

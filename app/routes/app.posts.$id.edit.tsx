@@ -4,7 +4,7 @@ import { useLoaderData } from "@remix-run/react";
 import { Page, Layout, Card, Banner } from "@shopify/polaris";
 import shopify from "../shopify.server.js";
 import { getBrands } from "../services/brand.server.js";
-import { getConnectedPlatforms } from "../services/oauth.server.js";
+import { getAccountsForBrand } from "../services/oauth.server.js";
 import {
   getPost,
   updatePost,
@@ -14,6 +14,7 @@ import {
   isPostEditable,
   PostNotEditableError,
 } from "../services/post.server.js";
+import { isManualPlatform } from "../utils/platformConstraints.js";
 import { PostWizard } from "../components/wizard/PostWizard.js";
 import type {
   WizardState,
@@ -46,7 +47,11 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
       name: b.name,
       logoUrl: b.logoUrl,
       timezone: b.timezone,
-      connectedPlatforms: (await getConnectedPlatforms(b.id)) as Platform[],
+      accounts: (await getAccountsForBrand(b.id)).map((a) => ({
+        id: a.id,
+        platform: a.platform as Platform,
+        accountName: a.accountName,
+      })),
     })),
   );
 
@@ -91,11 +96,24 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
         }
       : null;
 
+  // Rebuild the target selection: rows with a socialAccountId map back to their
+  // account chip; account-less rows for a manual platform (e.g. rednote) map to
+  // a manual-platform checkbox. An account-less row for a non-manual platform is
+  // an orphan (its account was disconnected) and is intentionally dropped so the
+  // merchant re-picks an account before saving.
+  const selectedAccountIds = post.platformPosts
+    .map((pp) => pp.socialAccountId)
+    .filter((id): id is string => id != null);
+  const manualPlatforms = post.platformPosts
+    .filter((pp) => pp.socialAccountId == null && isManualPlatform(pp.platform))
+    .map((pp) => pp.platform as Platform);
+
   const wizardInitial: WizardState = {
     scheduledAt: post.scheduledAt ? new Date(post.scheduledAt).toISOString() : null,
     brandId: post.brandId,
     postType: post.postType as PostType,
-    platforms: post.platformPosts.map((pp) => pp.platform as Platform),
+    selectedAccountIds,
+    manualPlatforms,
     mainContent: post.mainContent,
     mediaAssets,
     platformOverrides,

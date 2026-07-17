@@ -410,12 +410,17 @@ export default function PostDetail() {
               {post.platformPosts.map((pp) => {
                 const c = PLATFORM_CONSTRAINTS[pp.platform as Platform];
                 return (
-                  <Card key={pp.platform}>
+                  <Card key={pp.id}>
                     <InlineStack align="space-between" blockAlign="start">
                       <InlineStack gap="200" blockAlign="center">
                         <Text as="span" variant="headingMd">{c?.icon}</Text>
                         <BlockStack gap="100">
                           <Text as="p" variant="bodyMd" fontWeight="semibold">{c?.label ?? pp.platform}</Text>
+                          {pp.socialAccount?.accountName && (
+                            <Text as="p" variant="bodySm" tone="subdued">
+                              {pp.socialAccount.accountName}
+                            </Text>
+                          )}
                           {pp.status === PlatformPostStatus.AwaitingManual && (
                             <Text as="p" variant="bodySm" tone="subdued">
                               Waiting for you to post it manually (see the card above).

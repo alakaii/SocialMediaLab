@@ -17,39 +17,63 @@ import {
   TextField,
   Banner,
   Link,
+  Select,
+  Checkbox,
 } from "@shopify/polaris";
 import shopify from "../shopify.server.js";
+import { prisma } from "../db.server.js";
 import { getBrands } from "../services/brand.server.js";
-import { deleteOAuthToken, getConnectedPlatforms } from "../services/oauth.server.js";
+import {
+  getAccountsForShop,
+  deleteSocialAccount,
+  associateAccountWithBrand,
+  disassociateFromBrand,
+} from "../services/oauth.server.js";
 import { PLATFORM_CONSTRAINTS, isManualPlatform } from "../utils/platformConstraints.js";
 import { Platform } from "../types/post.js";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await shopify.authenticate.admin(request);
   const shop = session.shop;
-  const baseUrl = new URL(request.url).origin;
 
-  const brands = await getBrands(shop);
-  const brandsWithConnections = await Promise.all(
-    brands.map(async (brand) => ({
-      id: brand.id,
-      name: brand.name,
-      connectedPlatforms: await getConnectedPlatforms(brand.id),
-    })),
-  );
+  const [accounts, rawBrands] = await Promise.all([
+    getAccountsForShop(shop),
+    getBrands(shop),
+  ]);
+  const brands = rawBrands.map((b) => ({ id: b.id, name: b.name }));
 
-  return json({ brands: brandsWithConnections, baseUrl });
+  return json({ accounts, brands });
 };
 
 export const action = async ({ request }: ActionFunctionArgs) => {
   const { session } = await shopify.authenticate.admin(request);
+  const shop = session.shop;
   const formData = await request.formData();
   const intent = formData.get("_intent");
 
   if (intent === "disconnect") {
-    const brandId = formData.get("brandId") as string;
-    const platform = formData.get("platform") as string;
-    await deleteOAuthToken(brandId, platform);
+    // deleteSocialAccount is already scoped to the shop.
+    await deleteSocialAccount(String(formData.get("accountId")), shop);
+    return json({ ok: true });
+  }
+
+  if (intent === "associate" || intent === "disassociate") {
+    const accountId = String(formData.get("accountId"));
+    const brandId = String(formData.get("brandId"));
+    // Verify both the account and the brand belong to this shop before changing
+    // any association, so a merchant can never touch another shop's data.
+    const [account, brand] = await Promise.all([
+      prisma.socialAccount.findFirst({ where: { id: accountId, shop }, select: { id: true } }),
+      prisma.brand.findFirst({ where: { id: brandId, shop }, select: { id: true } }),
+    ]);
+    if (account && brand) {
+      if (intent === "associate") {
+        await associateAccountWithBrand(accountId, brandId);
+      } else {
+        await disassociateFromBrand(accountId, brandId);
+      }
+    }
+    return json({ ok: true });
   }
 
   return json({ ok: true });
@@ -157,97 +181,203 @@ function BlueskyConnectModal({
 }
 
 export default function Connections() {
-  const { brands } = useLoaderData<typeof loader>();
+  const { accounts, brands } = useLoaderData<typeof loader>();
   const fetcher = useFetcher();
   const [blueskyBrand, setBlueskyBrand] = useState<{ id: string; name: string } | null>(null);
+
+  // Connecting a new account always starts from a brand context; the new account
+  // auto-associates with the chosen brand. Default to the first brand.
+  const [connectBrandId, setConnectBrandId] = useState<string>(brands[0]?.id ?? "");
+  const connectBrand = brands.find((b) => b.id === connectBrandId) ?? null;
+
+  function toggleBrand(accountId: string, brandId: string, checked: boolean) {
+    fetcher.submit(
+      { _intent: checked ? "associate" : "disassociate", accountId, brandId },
+      { method: "POST" },
+    );
+  }
+
+  function disconnect(accountId: string) {
+    fetcher.submit({ _intent: "disconnect", accountId }, { method: "POST" });
+  }
 
   return (
     <Page title="Social Media Connections">
       <Layout>
-        {brands.map((brand) => (
-          <Layout.Section key={brand.id}>
-            <Card>
-              <BlockStack gap="400">
-                <Text as="h2" variant="headingMd">{brand.name}</Text>
-                <Divider />
-                <InlineStack gap="300" wrap>
-                  {ALL_PLATFORMS.map((platform) => {
-                    const c = PLATFORM_CONSTRAINTS[platform];
-                    const isManual = isManualPlatform(platform);
-                    const isConnected = brand.connectedPlatforms.includes(platform);
-                    const oauthUrl = `/api/oauth/${platform}?brandId=${brand.id}`;
+        {/* Connected accounts (shop-level) */}
+        <Layout.Section>
+          <Card>
+            <BlockStack gap="400">
+              <BlockStack gap="100">
+                <Text as="h2" variant="headingMd">Connected accounts</Text>
+                <Text as="p" tone="subdued">
+                  Accounts are connected once for your shop and can be shared with
+                  any of your brands.
+                </Text>
+              </BlockStack>
+              <Divider />
 
+              {accounts.length === 0 ? (
+                <Text as="p" tone="subdued">
+                  No accounts connected yet. Connect one below.
+                </Text>
+              ) : (
+                <BlockStack gap="400">
+                  {accounts.map((account) => {
+                    const c = PLATFORM_CONSTRAINTS[account.platform as Platform];
+                    const associatedBrandIds = new Set(account.brands.map((b) => b.id));
                     return (
                       <Box
-                        key={platform}
+                        key={account.id}
                         padding="400"
-                        background={isConnected ? "bg-surface-success" : "bg-surface"}
-                        borderColor={isConnected ? "border-success" : "border"}
+                        borderColor="border"
                         borderWidth="025"
                         borderRadius="200"
-                        minWidth="180px"
                       >
-                        <BlockStack gap="300" inlineAlign="center">
-                          <Text as="p" variant="headingXl">{c.icon}</Text>
-                          <Text as="p" variant="bodyMd" fontWeight="semibold">{c.label}</Text>
-                          {isManual ? (
-                            <Badge tone="info">Manual posting</Badge>
-                          ) : (
-                            <Badge tone={isConnected ? "success" : undefined}>
-                              {isConnected ? "Connected" : "Not connected"}
-                            </Badge>
-                          )}
-                          {isManual ? (
-                            <Text as="p" variant="bodySm" tone="subdued" alignment="center">
-                              No connection needed. The app preps your post at the
-                              scheduled time and you copy-paste it into the app.
-                            </Text>
-                          ) : isConnected ? (
+                        <BlockStack gap="300">
+                          <InlineStack align="space-between" blockAlign="center">
+                            <InlineStack gap="300" blockAlign="center">
+                              <Text as="span" variant="headingLg">{c?.icon}</Text>
+                              <BlockStack gap="0">
+                                <Text as="p" variant="bodyMd" fontWeight="semibold">
+                                  {account.accountName ?? c?.label ?? account.platform}
+                                </Text>
+                                <Text as="p" variant="bodySm" tone="subdued">
+                                  {c?.label ?? account.platform}
+                                </Text>
+                              </BlockStack>
+                            </InlineStack>
                             <Button
                               size="slim"
                               tone="critical"
-                              onClick={() => {
-                                fetcher.submit(
-                                  { _intent: "disconnect", brandId: brand.id, platform },
-                                  { method: "POST" },
-                                );
-                              }}
+                              onClick={() => disconnect(account.id)}
                             >
                               Disconnect
                             </Button>
-                          ) : platform === Platform.Bluesky ? (
-                            <Button
-                              size="slim"
-                              variant="primary"
-                              onClick={() => setBlueskyBrand({ id: brand.id, name: brand.name })}
-                            >
-                              Connect
-                            </Button>
+                          </InlineStack>
+
+                          <Divider />
+
+                          <Text as="p" variant="bodySm" tone="subdued">
+                            Available to these brands
+                          </Text>
+                          {brands.length === 0 ? (
+                            <Text as="p" variant="bodySm" tone="subdued">
+                              Add a brand to share this account with.
+                            </Text>
                           ) : (
-                            <Button size="slim" variant="primary" url={oauthUrl}>
-                              Connect
-                            </Button>
+                            <InlineStack gap="400" wrap>
+                              {brands.map((brand) => (
+                                <Checkbox
+                                  key={brand.id}
+                                  label={brand.name}
+                                  checked={associatedBrandIds.has(brand.id)}
+                                  onChange={(checked) =>
+                                    toggleBrand(account.id, brand.id, checked)
+                                  }
+                                />
+                              ))}
+                            </InlineStack>
                           )}
                         </BlockStack>
                       </Box>
                     );
                   })}
-                </InlineStack>
-              </BlockStack>
-            </Card>
-          </Layout.Section>
-        ))}
+                </BlockStack>
+              )}
+            </BlockStack>
+          </Card>
+        </Layout.Section>
 
-        {brands.length === 0 && (
-          <Layout.Section>
-            <Card>
-              <BlockStack gap="200" inlineAlign="center">
-                <Text as="p" tone="subdued">Add a brand first to connect social accounts.</Text>
-                <Button url="/app/brands/new">Add Brand</Button>
+        {/* Connect a new account */}
+        <Layout.Section>
+          <Card>
+            <BlockStack gap="400">
+              <BlockStack gap="100">
+                <Text as="h2" variant="headingMd">Connect a new account</Text>
+                <Text as="p" tone="subdued">
+                  Pick which brand to connect for. The new account is added to your
+                  shop and shared with that brand; you can share it with more brands
+                  above.
+                </Text>
               </BlockStack>
-            </Card>
-          </Layout.Section>
-        )}
+
+              {brands.length === 0 ? (
+                <BlockStack gap="200" inlineAlign="start">
+                  <Text as="p" tone="subdued">Add a brand first to connect social accounts.</Text>
+                  <Button url="/app/brands/new">Add Brand</Button>
+                </BlockStack>
+              ) : (
+                <>
+                  <Box maxWidth="320px">
+                    <Select
+                      label="Connect for brand"
+                      options={brands.map((b) => ({ label: b.name, value: b.id }))}
+                      value={connectBrandId}
+                      onChange={setConnectBrandId}
+                    />
+                  </Box>
+
+                  <Divider />
+
+                  <InlineStack gap="300" wrap>
+                    {ALL_PLATFORMS.map((platform) => {
+                      const c = PLATFORM_CONSTRAINTS[platform];
+                      const isManual = isManualPlatform(platform);
+                      const oauthUrl = `/api/oauth/${platform}?brandId=${connectBrandId}`;
+
+                      return (
+                        <Box
+                          key={platform}
+                          padding="400"
+                          background="bg-surface"
+                          borderColor="border"
+                          borderWidth="025"
+                          borderRadius="200"
+                          minWidth="180px"
+                        >
+                          <BlockStack gap="300" inlineAlign="center">
+                            <Text as="p" variant="headingXl">{c.icon}</Text>
+                            <Text as="p" variant="bodyMd" fontWeight="semibold">{c.label}</Text>
+                            {isManual ? (
+                              <Badge tone="info">Manual posting</Badge>
+                            ) : (
+                              <Badge>Connect</Badge>
+                            )}
+                            {isManual ? (
+                              <Text as="p" variant="bodySm" tone="subdued" alignment="center">
+                                No connection needed. The app preps your post at the
+                                scheduled time and you copy-paste it into the app.
+                              </Text>
+                            ) : platform === Platform.Bluesky ? (
+                              <Button
+                                size="slim"
+                                variant="primary"
+                                disabled={!connectBrand}
+                                onClick={() => connectBrand && setBlueskyBrand(connectBrand)}
+                              >
+                                Connect
+                              </Button>
+                            ) : (
+                              <Button
+                                size="slim"
+                                variant="primary"
+                                url={oauthUrl}
+                                disabled={!connectBrandId}
+                              >
+                                Connect
+                              </Button>
+                            )}
+                          </BlockStack>
+                        </Box>
+                      );
+                    })}
+                  </InlineStack>
+                </>
+              )}
+            </BlockStack>
+          </Card>
+        </Layout.Section>
       </Layout>
 
       <BlueskyConnectModal brand={blueskyBrand} onClose={() => setBlueskyBrand(null)} />

@@ -4,7 +4,8 @@ import axios from "axios";
 import shopify from "../shopify.server.js";
 import { prisma } from "../db.server.js";
 import {
-  upsertOAuthToken,
+  upsertSocialAccount,
+  associateAccountWithBrand,
   oauthStateCookie,
   metaSelectionCookie,
 } from "../services/oauth.server.js";
@@ -180,15 +181,19 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
       throw new Response(`Unsupported platform: ${platform}`, { status: 400 });
   }
 
-  await upsertOAuthToken({
-    brandId,
+  // Store the credential at the shop level, then associate it with the brand the
+  // merchant started the flow from (brandId came from the signed state cookie and
+  // was verified to belong to this shop above).
+  const account = await upsertSocialAccount({
+    shop: session.shop,
     platform,
+    accountId,
+    accountName,
     accessToken,
     refreshToken,
     expiresAt,
-    accountId,
-    accountName,
   });
+  await associateAccountWithBrand(account.id, brandId);
 
   return redirect("/app/connections", {
     headers: {

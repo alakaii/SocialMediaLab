@@ -1,11 +1,19 @@
 import { BlockStack, Card, Text, ResourceList, ResourceItem, Avatar, InlineStack, Badge } from "@shopify/polaris";
+import { PLATFORM_CONSTRAINTS } from "../../utils/platformConstraints.js";
+import type { Platform } from "../../types/post.js";
+
+interface BrandAccount {
+  id: string;
+  platform: Platform;
+  accountName: string | null;
+}
 
 interface Brand {
   id: string;
   name: string;
   logoUrl?: string | null;
   timezone: string;
-  connectedPlatforms: string[];
+  accounts: BrandAccount[];
 }
 
 interface StepBrandProps {
@@ -40,8 +48,10 @@ export function StepBrand({ brands, selectedId, onChange }: StepBrandProps) {
                     <Text as="p" variant="bodySm" tone="subdued">{brand.timezone}</Text>
                   </BlockStack>
                   <InlineStack gap="100">
-                    {brand.connectedPlatforms.map((p) => (
-                      <Badge key={p} size="small">{p}</Badge>
+                    {brand.accounts.map((a) => (
+                      <Badge key={a.id} size="small">
+                        {`${PLATFORM_CONSTRAINTS[a.platform]?.icon ?? ""} ${a.accountName ?? PLATFORM_CONSTRAINTS[a.platform]?.label ?? a.platform}`}
+                      </Badge>
                     ))}
                     {selectedId === brand.id && <Badge tone="success">Selected</Badge>}
                   </InlineStack>

@@ -18,6 +18,11 @@ export interface PlatformJobData {
   postId: string;
   postPlatformId: string;
   platform: string;
+  // The shop-level account this row publishes to. Null for manual platforms
+  // (e.g. rednote) which have no connected account. The worker treats the
+  // PostPlatform row's own socialAccountId as the source of truth and uses this
+  // only as a hint, so pre-refactor jobs that lack it still resolve correctly.
+  socialAccountId: string | null;
 }
 
 /**

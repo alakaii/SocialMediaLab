@@ -4,7 +4,11 @@ export async function getBrands(shop: string) {
   return prisma.brand.findMany({
     where: { shop },
     include: {
-      oauthTokens: { select: { platform: true, accountName: true } },
+      socialAccounts: {
+        select: {
+          socialAccount: { select: { platform: true, accountName: true } },
+        },
+      },
       _count: { select: { posts: true } },
     },
     orderBy: { name: "asc" },
@@ -15,7 +19,9 @@ export async function getBrand(id: string, shop: string) {
   return prisma.brand.findFirst({
     where: { id, shop },
     include: {
-      oauthTokens: true,
+      socialAccounts: {
+        include: { socialAccount: true },
+      },
     },
   });
 }
