@@ -5,6 +5,33 @@ import { recordProductHashtags } from "./hashtag.server.js";
 import type { WizardState } from "../types/post.js";
 import { PostStatus, PlatformPostStatus } from "../types/post.js";
 
+/**
+ * Post statuses a merchant is allowed to edit or publish-now. A draft has not
+ * been scheduled yet; a scheduled post has queued jobs we can still cancel and
+ * recompute. Once a post starts publishing (publishing/published/failed) or is
+ * cancelled, its content and platform set are frozen.
+ */
+export const EDITABLE_POST_STATUSES: string[] = [
+  PostStatus.Draft,
+  PostStatus.Scheduled,
+];
+
+export function isPostEditable(status: string): boolean {
+  return EDITABLE_POST_STATUSES.includes(status);
+}
+
+/**
+ * Thrown when an edit or publish-now is attempted on a post that is no longer
+ * editable (e.g. a queued job fired between page load and submit). Routes catch
+ * this and show a friendly banner instead of crashing.
+ */
+export class PostNotEditableError extends Error {
+  constructor() {
+    super("This post can no longer be edited.");
+    this.name = "PostNotEditableError";
+  }
+}
+
 export async function getPosts(shop: string, filters?: { status?: string; brandId?: string }) {
   return prisma.post.findMany({
     where: {
@@ -134,12 +161,116 @@ export async function createAndSchedulePost(shop: string, wizard: WizardState) {
 }
 
 /**
+ * Apply a wizard edit to an existing post, reconciling its platform and media
+ * children to match the new wizard state. Only updates the content of the post;
+ * scheduling/jobs are handled by the caller (schedule / draft / publish-now).
+ *
+ * Platform rows are reconciled by platform key so an unchanged platform keeps its
+ * row (and thus its status, publishAt, and queued job) rather than being deleted
+ * and recreated. Removed platforms have their queued job cancelled before the row
+ * is deleted so it cannot fire against a missing row. Media assets are fully
+ * replaced to match the wizard.
+ *
+ * Guards ownership and editability up front: throws PostNotEditableError if the
+ * post has left an editable state (e.g. a queued job fired mid-edit).
+ */
+export async function updatePost(postId: string, shop: string, wizard: WizardState) {
+  const existing = await prisma.post.findFirst({
+    where: { id: postId, shop },
+    include: {
+      platformPosts: { select: { id: true, platform: true, bullJobId: true } },
+    },
+  });
+  if (!existing) throw new Error("Post not found");
+  if (!isPostEditable(existing.status)) throw new PostNotEditableError();
+
+  const product = wizard.product ?? null;
+
+  await prisma.post.update({
+    where: { id: postId },
+    data: {
+      brandId: wizard.brandId!,
+      postType: wizard.postType!,
+      scheduledAt: wizard.scheduledAt ? new Date(wizard.scheduledAt) : null,
+      mainContent: wizard.mainContent,
+      productId: product?.id ?? null,
+      productHandle: product?.handle ?? null,
+      productTitle: product?.title ?? null,
+      productUrl: product?.url ?? null,
+    },
+  });
+
+  // Reconcile platform rows against the new selection.
+  const existingByPlatform = new Map(
+    existing.platformPosts.map((pp) => [pp.platform, pp] as const),
+  );
+  const desired = new Set<string>(wizard.platforms);
+
+  // Remove platforms no longer selected; cancel any queued job first so it does
+  // not fire against a row we are about to delete.
+  for (const pp of existing.platformPosts) {
+    if (!desired.has(pp.platform)) {
+      if (pp.bullJobId) await removeJob(pp.bullJobId);
+      await prisma.postPlatform.delete({ where: { id: pp.id } });
+    }
+  }
+
+  // Add newly selected platforms and update per-platform content on kept rows.
+  for (const platform of wizard.platforms) {
+    const override = wizard.platformOverrides[platform];
+    const content = override?.content ?? null;
+    const extraJson = override?.extra ? JSON.stringify(override.extra) : null;
+    const current = existingByPlatform.get(platform);
+    if (current) {
+      // Unchanged platform: update its content but preserve status/publishAt/job.
+      await prisma.postPlatform.update({
+        where: { id: current.id },
+        data: { content, extraJson },
+      });
+    } else {
+      await prisma.postPlatform.create({
+        data: { postId, platform, content, extraJson },
+      });
+    }
+  }
+
+  // Media assets are fully replaced to match the wizard.
+  await prisma.mediaAsset.deleteMany({ where: { postId } });
+  if (wizard.mediaAssets.length > 0) {
+    await prisma.mediaAsset.createMany({
+      data: wizard.mediaAssets.map((asset, i) => ({
+        postId,
+        url: asset.url,
+        mimeType: asset.mimeType,
+        width: asset.width,
+        height: asset.height,
+        durationSec: asset.durationSec,
+        sizeBytes: asset.sizeBytes,
+        altText: asset.altText,
+        sortOrder: i,
+      })),
+    });
+  }
+
+  // Remember hashtags for the linked product, same as createPost. Non-fatal.
+  if (product?.id) {
+    try {
+      await recordProductHashtags(shop, product.id, wizard.mainContent);
+    } catch {
+      // ignore
+    }
+  }
+
+  return postId;
+}
+
+/**
  * Remove every queued BullMQ job tied to a post: the per-platform jobs whose
  * ids live on each PostPlatform row, plus any legacy post-level job on
  * Post.bullJobId (from before publishing became per-platform). Also clears the
  * stored job ids so the rows are not left pointing at removed jobs.
  */
-async function removeAllJobsForPost(postId: string, legacyJobId: string | null) {
+export async function removeAllJobsForPost(postId: string, legacyJobId: string | null) {
   const platformPosts = await prisma.postPlatform.findMany({
     where: { postId },
     select: { id: true, bullJobId: true },
