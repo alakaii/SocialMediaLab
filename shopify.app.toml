@@ -20,5 +20,12 @@ api_version = "2025-10"
   topics = ["app/uninstalled"]
   uri = "/webhooks/app/uninstalled"
 
+  # Mandatory compliance webhooks. These cannot be registered through the Admin
+  # API, so they only exist here; the handler lives at app/routes/webhooks.compliance.ts
+  # and dispatches on the topic header.
+  [[webhooks.subscriptions]]
+  compliance_topics = ["customers/data_request", "customers/redact", "shop/redact"]
+  uri = "/webhooks/compliance"
+
 [pos]
 embedded = false
