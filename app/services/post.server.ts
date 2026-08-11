@@ -140,6 +140,8 @@ export async function createPost(shop: string, wizard: WizardState) {
       productHandle: product?.handle ?? null,
       productTitle: product?.title ?? null,
       productUrl: product?.url ?? null,
+      variantId: product?.variantId ?? null,
+      variantTitle: product?.variantTitle ?? null,
       platformPosts: {
         create: platformRows.map((r) => ({
           platform: r.platform,
@@ -374,6 +376,8 @@ export async function updatePost(postId: string, shop: string, wizard: WizardSta
       productHandle: product?.handle ?? null,
       productTitle: product?.title ?? null,
       productUrl: product?.url ?? null,
+      variantId: product?.variantId ?? null,
+      variantTitle: product?.variantTitle ?? null,
     },
   });
 

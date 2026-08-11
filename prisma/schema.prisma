@@ -91,11 +91,14 @@ model Post {
   mainContent String
 
   // Optional linked Shopify product. Products live in Shopify, so these are
-  // plain nullable columns with no relation.
+  // plain nullable columns with no relation. When a specific variant is linked,
+  // productUrl carries ?variant=<numeric id> so the storefront preselects it.
   productId     String?
   productHandle String?
   productTitle  String?
   productUrl    String?
+  variantId     String?
+  variantTitle  String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

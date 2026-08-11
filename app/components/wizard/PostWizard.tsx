@@ -4,7 +4,10 @@ import { useFetcher } from "@remix-run/react";
 import { useWizardState, WIZARD_STEPS } from "../../hooks/useWizardState.js";
 import type { WizardState, PostType } from "../../types/post.js";
 import { Platform } from "../../types/post.js";
-import { getPlatformsForPostType } from "../../utils/platformConstraints.js";
+import {
+  getPlatformsForPostType,
+  PLATFORM_CONSTRAINTS,
+} from "../../utils/platformConstraints.js";
 
 import { StepSchedule } from "./StepSchedule.js";
 import { StepBrand } from "./StepBrand.js";
@@ -61,6 +64,20 @@ export function PostWizard({ brands, shop, initial }: PostWizardProps) {
     for (const p of state.manualPlatforms) set.add(p);
     return [...set];
   }, [state.selectedAccountIds, state.manualPlatforms, accountsById]);
+
+  // Names of the selected accounts per platform, so the review step can name the
+  // profile a preview stands for (and flag when an override covers several).
+  const accountNamesByPlatform = useMemo(() => {
+    const map: Partial<Record<Platform, string[]>> = {};
+    for (const id of state.selectedAccountIds) {
+      const acct = accountsById.get(id);
+      if (!acct) continue;
+      const names = map[acct.platform] ?? [];
+      names.push(acct.accountName ?? PLATFORM_CONSTRAINTS[acct.platform].label);
+      map[acct.platform] = names;
+    }
+    return map;
+  }, [state.selectedAccountIds, accountsById]);
 
   // Accounts to pre-check when a brand or post type changes: every account of
   // the chosen brand whose platform is compatible with the chosen post type.
@@ -154,6 +171,10 @@ export function PostWizard({ brands, shop, initial }: PostWizardProps) {
             mediaAssets={state.mediaAssets}
             overrides={state.platformOverrides}
             onOverrideChange={setPlatformOverride}
+            brandName={selectedBrand?.name ?? "Your brand"}
+            brandLogoUrl={selectedBrand?.logoUrl}
+            accountNamesByPlatform={accountNamesByPlatform}
+            product={state.product}
           />
         );
       default:

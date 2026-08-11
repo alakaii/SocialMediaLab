@@ -8,7 +8,7 @@ export const WIZARD_STEPS = [
   "Post Type",
   "Platforms",
   "Content",
-  "Adjust",
+  "Review",
 ] as const;
 
 export type WizardStep = (typeof WIZARD_STEPS)[number];

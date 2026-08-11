@@ -1,15 +1,22 @@
 /**
- * Pulls existing images out of the merchant's store (linked product, collections,
- * and blog articles) so they can be reused as post media without re-uploading.
- * Returns plain Shopify CDN URLs, which MediaAsset.url can store directly.
+ * Pulls existing images out of the merchant's store (linked product and its
+ * variants, collections, and blog articles) so they can be reused as post media
+ * without re-uploading. Returns plain Shopify CDN URLs, which MediaAsset.url can
+ * store directly.
  */
 
-export type StoreMediaSource = "product" | "collection" | "blog";
+import { DEFAULT_VARIANT_TITLE } from "../utils/product.js";
+
+export type StoreMediaSource = "product" | "variant" | "collection" | "blog";
 
 export interface StoreMediaImage {
   url: string;
   altText: string | null;
   source: StoreMediaSource;
+  // Set when the image belongs to a specific variant, so the picker can surface
+  // and label the image of the variant a post links to.
+  variantId?: string | null;
+  variantTitle?: string | null;
 }
 
 // Minimal shape of the admin GraphQL client returned by authenticate.admin.
@@ -46,6 +53,9 @@ const PRODUCT_IMAGES_QUERY = `#graphql
       images(first: 25) {
         edges { node { url altText } }
       }
+      variants(first: 100) {
+        edges { node { id title image { url altText } } }
+      }
     }
   }
 `;
@@ -66,18 +76,48 @@ const ARTICLE_IMAGES_QUERY = `#graphql
   }
 `;
 
+interface VariantNode {
+  id?: string | null;
+  title?: string | null;
+  image?: ImageNode | null;
+}
+
+/**
+ * Gallery images of the product plus the image of each of its variants, in one
+ * round trip. Variants named "Default Title" belong to products with no real
+ * variants, so they are skipped.
+ */
 async function fetchProductImages(
   admin: AdminGraphqlClient,
   productId: string,
-): Promise<StoreMediaImage[]> {
+): Promise<{ productImages: StoreMediaImage[]; variantImages: StoreMediaImage[] }> {
   const data = await runQuery<{
-    product?: { images?: { edges?: { node?: ImageNode }[] } } | null;
+    product?: {
+      images?: { edges?: { node?: ImageNode }[] };
+      variants?: { edges?: { node?: VariantNode }[] };
+    } | null;
   }>(admin, PRODUCT_IMAGES_QUERY, { id: productId });
-  const edges = data?.product?.images?.edges ?? [];
-  return edges
+
+  const productImages = (data?.product?.images?.edges ?? [])
     .map((e) => e.node)
     .filter((n): n is ImageNode => Boolean(n?.url))
     .map((n) => ({ url: n.url as string, altText: n.altText ?? null, source: "product" as const }));
+
+  const variantImages: StoreMediaImage[] = [];
+  for (const edge of data?.product?.variants?.edges ?? []) {
+    const node = edge.node;
+    if (!node?.id || !node.image?.url) continue;
+    if (!node.title || node.title === DEFAULT_VARIANT_TITLE) continue;
+    variantImages.push({
+      url: node.image.url,
+      altText: node.image.altText ?? null,
+      source: "variant",
+      variantId: node.id,
+      variantTitle: node.title,
+    });
+  }
+
+  return { productImages, variantImages };
 }
 
 async function fetchCollectionImages(
@@ -114,21 +154,39 @@ export async function getStoreMedia(
   const productId = opts.productId?.trim() || null;
   const query = opts.query?.trim() || undefined;
 
-  const [productImages, collectionImages, articleImages] = await Promise.all([
-    productId ? fetchProductImages(admin, productId) : Promise.resolve([]),
+  const [product, collectionImages, articleImages] = await Promise.all([
+    productId
+      ? fetchProductImages(admin, productId)
+      : Promise.resolve({ productImages: [], variantImages: [] }),
     fetchCollectionImages(admin, query),
     fetchArticleImages(admin),
   ]);
 
-  // Product images first (most relevant when a product is linked), then
-  // collections, then blog articles. De-duplicate by URL.
-  const ordered = [...productImages, ...collectionImages, ...articleImages];
-  const seen = new Set<string>();
+  // Product images first (most relevant when a product is linked), then the
+  // variant images, then collections, then blog articles. De-duplicate by URL.
+  const ordered = [
+    ...product.productImages,
+    ...product.variantImages,
+    ...collectionImages,
+    ...articleImages,
+  ];
+  const seen = new Map<string, StoreMediaImage>();
   const result: StoreMediaImage[] = [];
   for (const img of ordered) {
-    if (seen.has(img.url)) continue;
-    seen.add(img.url);
-    result.push(img);
+    const kept = seen.get(img.url);
+    if (kept) {
+      // The same file is often both a gallery image and a variant image. Keep
+      // the first entry, but remember the variant it belongs to so the picker
+      // can still surface it for that variant.
+      if (!kept.variantId && img.variantId) {
+        kept.variantId = img.variantId;
+        kept.variantTitle = img.variantTitle;
+      }
+      continue;
+    }
+    const copy = { ...img };
+    seen.set(copy.url, copy);
+    result.push(copy);
   }
   return result;
 }

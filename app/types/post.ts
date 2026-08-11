@@ -60,7 +60,13 @@ export interface LinkedProduct {
   id: string; // Shopify product GID, e.g. gid://shopify/Product/123
   handle: string;
   title: string;
-  url: string; // https://<shop-domain>/products/<handle>
+  // https://<shop-domain>/products/<handle>, plus ?variant=<numeric id> when a
+  // specific variant is linked, so the storefront opens with it preselected.
+  url: string;
+  // Optional specific variant of the linked product. Null when the post links
+  // the product as a whole.
+  variantId?: string | null; // Shopify variant GID, e.g. gid://shopify/ProductVariant/456
+  variantTitle?: string | null;
 }
 
 export interface WizardMediaAsset {

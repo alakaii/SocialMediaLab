@@ -115,6 +115,7 @@ export function StepContent({
                 ) : (
                   <StoreMediaPicker
                     productId={product?.id ?? null}
+                    variantId={product?.variantId ?? null}
                     assets={mediaAssets}
                     onChange={onMediaChange}
                     maxFiles={MAX_FILES[postType]}

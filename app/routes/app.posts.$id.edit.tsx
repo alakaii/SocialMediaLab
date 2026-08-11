@@ -92,7 +92,10 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
           id: post.productId,
           handle: post.productHandle,
           title: post.productTitle,
+          // Already carries ?variant=<id> when a variant was linked.
           url: post.productUrl,
+          variantId: post.variantId,
+          variantTitle: post.variantTitle,
         }
       : null;
 

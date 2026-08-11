@@ -397,6 +397,11 @@ export default function PostDetail() {
                 <BlockStack gap="200">
                   <Text as="p" tone="subdued">Linked product</Text>
                   <Text as="p" variant="bodyMd">{post.productTitle}</Text>
+                  {post.variantTitle && (
+                    <Text as="p" variant="bodySm" tone="subdued">
+                      Variant: {post.variantTitle}
+                    </Text>
+                  )}
                   {post.productUrl && (
                     <Text as="p" variant="bodySm" tone="subdued">{post.productUrl}</Text>
                   )}
