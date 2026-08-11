@@ -37,7 +37,15 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const prefillScheduledAt =
     date && /^\d{4}-\d{2}-\d{2}$/.test(date) ? `${date}T12:00:00.000Z` : null;
 
-  return json({ brands, prefillScheduledAt, holiday, shop });
+  // Handed to the browser at request time (not bundled at build time) so the
+  // Dropbox Chooser can be enabled by setting the key and restarting.
+  return json({
+    brands,
+    prefillScheduledAt,
+    holiday,
+    shop,
+    dropboxAppKey: process.env.DROPBOX_APP_KEY || null,
+  });
 };
 
 export const action = async ({ request }: ActionFunctionArgs) => {
@@ -61,7 +69,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 };
 
 export default function NewPost() {
-  const { brands, prefillScheduledAt, holiday, shop } = useLoaderData<typeof loader>();
+  const { brands, prefillScheduledAt, holiday, shop, dropboxAppKey } =
+    useLoaderData<typeof loader>();
 
   const initial = prefillScheduledAt ? { scheduledAt: prefillScheduledAt } : undefined;
 
@@ -80,7 +89,12 @@ export default function NewPost() {
         )}
         <Layout.Section>
           <Card>
-            <PostWizard brands={brands} shop={shop} initial={initial} />
+            <PostWizard
+              brands={brands}
+              shop={shop}
+              dropboxAppKey={dropboxAppKey}
+              initial={initial}
+            />
           </Card>
         </Layout.Section>
       </Layout>

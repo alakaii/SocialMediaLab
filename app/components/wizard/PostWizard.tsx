@@ -33,10 +33,16 @@ interface Brand {
 interface PostWizardProps {
   brands: Brand[];
   shop: string;
+  /**
+   * Read from the environment by the route loader rather than bundled at build
+   * time, so the key can be set (or rotated) without a rebuild. Null when it is
+   * not configured, which disables the Dropbox option in the content step.
+   */
+  dropboxAppKey?: string | null;
   initial?: Partial<WizardState>;
 }
 
-export function PostWizard({ brands, shop, initial }: PostWizardProps) {
+export function PostWizard({ brands, shop, dropboxAppKey = null, initial }: PostWizardProps) {
   const { state, setState, step, next, back, canAdvance, setPlatformOverride } = useWizardState(initial);
   const fetcher = useFetcher<{ error?: string }>();
 
@@ -158,6 +164,7 @@ export function PostWizard({ brands, shop, initial }: PostWizardProps) {
             mediaAssets={state.mediaAssets}
             product={state.product}
             shop={shop}
+            dropboxAppKey={dropboxAppKey}
             onContentChange={(mainContent) => setState((s) => ({ ...s, mainContent }))}
             onMediaChange={(mediaAssets) => setState((s) => ({ ...s, mediaAssets }))}
             onProductChange={(product) => setState((s) => ({ ...s, product }))}

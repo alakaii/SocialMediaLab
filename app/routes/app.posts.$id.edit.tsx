@@ -123,7 +123,15 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     product,
   };
 
-  return json({ brands, shop, wizardInitial, postId: post.id });
+  // Handed to the browser at request time (not bundled at build time) so the
+  // Dropbox Chooser can be enabled by setting the key and restarting.
+  return json({
+    brands,
+    shop,
+    wizardInitial,
+    postId: post.id,
+    dropboxAppKey: process.env.DROPBOX_APP_KEY || null,
+  });
 };
 
 export const action = async ({ request, params }: ActionFunctionArgs) => {
@@ -168,7 +176,8 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
 };
 
 export default function EditPost() {
-  const { brands, shop, wizardInitial, postId } = useLoaderData<typeof loader>();
+  const { brands, shop, wizardInitial, postId, dropboxAppKey } =
+    useLoaderData<typeof loader>();
 
   return (
     <Page
@@ -184,7 +193,12 @@ export default function EditPost() {
         </Layout.Section>
         <Layout.Section>
           <Card>
-            <PostWizard brands={brands} shop={shop} initial={wizardInitial} />
+            <PostWizard
+              brands={brands}
+              shop={shop}
+              dropboxAppKey={dropboxAppKey}
+              initial={wizardInitial}
+            />
           </Card>
         </Layout.Section>
       </Layout>

@@ -32,6 +32,18 @@ export interface ShopifyFileUpload {
   mimeType: string;
 }
 
+export interface ShopifyFileBufferUpload {
+  /**
+   * The file's bytes, already in memory. Backed by a plain ArrayBuffer (rather
+   * than the SharedArrayBuffer a bare Uint8Array also allows) so the bytes can
+   * go straight into a Blob without being copied a second time.
+   */
+  data: Uint8Array<ArrayBuffer>;
+  /** Name the merchant will see in Settings > Files. */
+  filename: string;
+  mimeType: string;
+}
+
 export interface ShopifyFileUploadResult {
   /** Permanent, absolute Shopify CDN URL. */
   url: string;
@@ -389,11 +401,50 @@ async function waitForCdnUrl(
 }
 
 /**
+ * The whole staged-upload dance, from a Blob the caller already has. Images go
+ * up as IMAGE so Shopify reports their dimensions; everything else (video
+ * included) goes up as a generic FILE, which keeps a directly downloadable URL
+ * that the social platform APIs can ingest, rather than the transcoded streaming
+ * sources a Shopify-hosted VIDEO would produce.
+ */
+async function uploadBlobToShopifyFiles(
+  admin: AdminGraphqlClient,
+  blob: Blob,
+  filename: string,
+  mimeType: string,
+): Promise<ShopifyFileUploadResult> {
+  const isImage = mimeType.startsWith("image/");
+  const contentType = isImage ? "IMAGE" : "FILE";
+
+  if (blob.size === 0) {
+    throw new ShopifyFileUploadError(`"${filename}" is empty.`, 400);
+  }
+
+  const target = await createStagedTarget(admin, {
+    resource: contentType,
+    filename,
+    mimeType,
+    // UnsignedInt64 is serialized as a string.
+    fileSize: String(blob.size),
+  });
+
+  await uploadBytes(target, blob, filename);
+
+  const file = await createFile(admin, {
+    originalSource: target.resourceUrl,
+    contentType,
+    filename,
+  });
+
+  // Small images are occasionally ready by the time fileCreate returns.
+  const immediate = extractResult(file);
+  if (immediate) return immediate;
+
+  return waitForCdnUrl(admin, file.id as string, filename);
+}
+
+/**
  * Uploads a local temp file to Shopify Files and returns its permanent CDN URL.
- * Images go up as IMAGE so Shopify reports their dimensions; everything else
- * (video included) goes up as a generic FILE, which keeps a directly
- * downloadable URL that the social platform APIs can ingest, rather than the
- * transcoded streaming sources a Shopify-hosted VIDEO would produce.
  *
  * The caller owns the temp file and is responsible for deleting it.
  */
@@ -401,33 +452,20 @@ export async function uploadToShopifyFiles(
   admin: AdminGraphqlClient,
   upload: ShopifyFileUpload,
 ): Promise<ShopifyFileUploadResult> {
-  const isImage = upload.mimeType.startsWith("image/");
-  const contentType = isImage ? "IMAGE" : "FILE";
   const blob = await readAsBlob(upload.filepath, upload.mimeType);
+  return uploadBlobToShopifyFiles(admin, blob, upload.filename, upload.mimeType);
+}
 
-  if (blob.size === 0) {
-    throw new ShopifyFileUploadError(`"${upload.filename}" is empty.`, 400);
-  }
-
-  const target = await createStagedTarget(admin, {
-    resource: contentType,
-    filename: upload.filename,
-    mimeType: upload.mimeType,
-    // UnsignedInt64 is serialized as a string.
-    fileSize: String(blob.size),
-  });
-
-  await uploadBytes(target, blob, upload.filename);
-
-  const file = await createFile(admin, {
-    originalSource: target.resourceUrl,
-    contentType,
-    filename: upload.filename,
-  });
-
-  // Small images are occasionally ready by the time fileCreate returns.
-  const immediate = extractResult(file);
-  if (immediate) return immediate;
-
-  return waitForCdnUrl(admin, file.id as string, upload.filename);
+/**
+ * Same upload, for bytes that never touched disk. Cloud imports stream the file
+ * out of the provider straight into memory, so there is no temp file to hand to
+ * uploadToShopifyFiles. Callers are responsible for capping the size before they
+ * buffer (see api.cloud-import).
+ */
+export async function uploadBufferToShopifyFiles(
+  admin: AdminGraphqlClient,
+  upload: ShopifyFileBufferUpload,
+): Promise<ShopifyFileUploadResult> {
+  const blob = new Blob([upload.data], { type: upload.mimeType });
+  return uploadBlobToShopifyFiles(admin, blob, upload.filename, upload.mimeType);
 }

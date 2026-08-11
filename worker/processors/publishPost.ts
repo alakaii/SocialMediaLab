@@ -5,6 +5,10 @@ import { getFreshToken } from "../../app/services/token-refresh.server.js";
 import type { Platform } from "../../app/types/post.js";
 import { PostStatus, PlatformPostStatus } from "../../app/types/post.js";
 import { isManualPlatform } from "../../app/utils/platformConstraints.js";
+import {
+  isFetchableMediaUrl,
+  LEGACY_MEDIA_UNAVAILABLE_MESSAGE,
+} from "../../app/utils/mediaUrl.js";
 
 const prisma = new PrismaClient();
 
@@ -41,6 +45,17 @@ async function resolveSocialAccountId(
     select: { socialAccountId: true },
   });
   return link?.socialAccountId ?? null;
+}
+
+/**
+ * True when the post carries media the adapters cannot fetch. Assets added
+ * before the Shopify Files migration hold a relative "/uploads/..." URL whose
+ * file no longer exists, and every adapter blows up on it with "Failed to parse
+ * URL". There is nothing a retry can fix, so the platform is failed with an
+ * explanation instead.
+ */
+function hasUnavailableMedia(mediaAssets: { url: string }[]): boolean {
+  return mediaAssets.some((asset) => !isFetchableMediaUrl(asset.url));
 }
 
 // In-flight platform status. PlatformPostStatus has no "publishing" member and
@@ -162,6 +177,21 @@ async function publishSinglePlatform(job: Job<PlatformJobData>): Promise<void> {
     return;
   }
 
+  // Media the adapter cannot fetch is a dead end, so fail this platform with a
+  // plain explanation before a token is fetched or an adapter is called. No
+  // throw: BullMQ must not retry something only the merchant can fix.
+  if (hasUnavailableMedia(post.mediaAssets)) {
+    await prisma.postPlatform.update({
+      where: { id: postPlatformId },
+      data: {
+        status: PlatformPostStatus.Failed,
+        errorMessage: LEGACY_MEDIA_UNAVAILABLE_MESSAGE,
+      },
+    });
+    await recomputePostStatus(postId);
+    return;
+  }
+
   // Resolve the shop-level account to publish to. The row's own socialAccountId
   // is the source of truth; fall back to the job's hint, then to the post's
   // brand's linked account for this platform (covers pre-refactor jobs/rows).
@@ -261,6 +291,24 @@ async function publishAllPlatformsLegacy(job: Job<LegacyJobData>): Promise<void>
 
   if (post.status === PostStatus.Cancelled) {
     return; // Silently skip cancelled posts
+  }
+
+  // Same dead end as the per-platform path: media the adapters cannot fetch
+  // fails every platform on the post with an explanation, and does not throw, so
+  // the job is not retried.
+  if (hasUnavailableMedia(post.mediaAssets)) {
+    await prisma.postPlatform.updateMany({
+      where: { postId },
+      data: {
+        status: PlatformPostStatus.Failed,
+        errorMessage: LEGACY_MEDIA_UNAVAILABLE_MESSAGE,
+      },
+    });
+    await prisma.post.update({
+      where: { id: postId },
+      data: { status: PostStatus.Failed },
+    });
+    return;
   }
 
   await prisma.post.update({

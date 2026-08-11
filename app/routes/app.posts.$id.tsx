@@ -34,6 +34,10 @@ import {
 } from "../utils/platformConstraints.js";
 import { PostStatus, PlatformPostStatus, isPostEditable } from "../types/post.js";
 import type { Platform } from "../types/post.js";
+import {
+  isFetchableMediaUrl,
+  LEGACY_MEDIA_UNAVAILABLE_MESSAGE,
+} from "../utils/mediaUrl.js";
 
 export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   const { session } = await shopify.authenticate.admin(request);
@@ -186,20 +190,31 @@ function ManualPostCard({
             <Text as="p" variant="bodySm" tone="subdued">
               Open each item in a new tab to save it, then upload it when you post.
             </Text>
+            {post.mediaAssets.some((asset) => !isFetchableMediaUrl(asset.url)) && (
+              <Banner tone="warning">{LEGACY_MEDIA_UNAVAILABLE_MESSAGE}</Banner>
+            )}
             <InlineStack gap="300" wrap>
               {post.mediaAssets.map((asset) => {
                 const isVideo = asset.mimeType.startsWith("video");
+                // Media added before the Shopify Files migration has a relative
+                // URL whose file is gone, so show why it is missing rather than
+                // a broken image and a dead link.
+                const available = isFetchableMediaUrl(asset.url);
                 return (
                   <BlockStack key={asset.id} gap="100" inlineAlign="center">
                     <Box
-                      borderColor="border"
+                      borderColor={available ? "border" : "border-caution"}
                       borderWidth="025"
                       borderRadius="200"
                       overflowX="hidden"
                       overflowY="hidden"
                       minWidth="96px"
                     >
-                      {isVideo ? (
+                      {!available ? (
+                        <Box padding="600" background="bg-surface-caution">
+                          <Text as="span" variant="headingLg">⚠️</Text>
+                        </Box>
+                      ) : isVideo ? (
                         <Box padding="600" background="bg-surface-secondary">
                           <Text as="span" variant="headingLg">🎬</Text>
                         </Box>
@@ -216,9 +231,15 @@ function ManualPostCard({
                         />
                       )}
                     </Box>
-                    <Link url={asset.url} external>
-                      Open in new tab
-                    </Link>
+                    {available ? (
+                      <Link url={asset.url} external>
+                        Open in new tab
+                      </Link>
+                    ) : (
+                      <Text as="p" variant="bodySm" tone="caution">
+                        No longer available
+                      </Text>
+                    )}
                   </BlockStack>
                 );
               })}
