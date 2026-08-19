@@ -7,10 +7,13 @@
     "build": "remix vite:build",
     "dev": "shopify app dev",
     "lint": "eslint --cache --cache-location ./node_modules/.cache/eslint .",
+    "typecheck": "tsc --noEmit",
     "setup": "prisma generate && prisma migrate deploy",
     "start": "remix-serve ./build/server/index.js",
     "worker": "node --import=tsx/esm worker/index.ts",
-    "docker-start": "npm run setup && npm run start"
+    "docker-start": "npm run setup && npm run start",
+    "deploy": "bash scripts/deploy.sh",
+    "verify-deploy": "bash scripts/verify-deploy.sh"
   },
   "dependencies": {
     "@atproto/api": "^0.20.29",
@@ -42,6 +45,7 @@
     "@types/react": "^18.3.1",
     "@types/react-dom": "^18.3.1",
     "eslint": "8.57.1",
+    "eslint-plugin-react-hooks": "^4.6.2",
     "prisma": "^5.22.0",
     "tsx": "^4.19.2",
     "typescript": "^5.7.3",

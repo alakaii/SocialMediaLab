@@ -4,7 +4,7 @@ import shopify from "../shopify.server.js";
 import { prisma } from "../db.server.js";
 
 export const action = async ({ request }: ActionFunctionArgs) => {
-  const { shop, payload } = await shopify.authenticate.webhook(request);
+  const { shop } = await shopify.authenticate.webhook(request);
 
   await prisma.session.deleteMany({ where: { shop } });
 
