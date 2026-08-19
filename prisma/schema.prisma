@@ -144,11 +144,64 @@ model PostPlatform {
 }
 
 model ShopSettings {
-  id             String   @id @default(cuid())
-  shop           String   @unique
-  holidayCountry String   @default("US")
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  id                    String    @id @default(cuid())
+  shop                  String    @unique
+  holidayCountry        String    @default("US")
+  // Set once the merchant dismisses the home page setup guide. Null means the
+  // guide is still showing.
+  onboardingDismissedAt DateTime?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+}
+
+// Cached subscription state for one shop, under Shopify App Pricing.
+//
+// App Pricing sends no webhooks, so subscription state is read back from the
+// Partner API (which identifies shops by GID, not domain) on page load and
+// cached here. The cache is also the safety net: a failed or unconfigured
+// Partner read must never downgrade a paying merchant, so the last known good
+// tier survives an outage.
+model ShopBilling {
+  id         String    @id @default(cuid())
+  shop       String    @unique
+  /// gid://shopify/Shop/... captured after auth. Required by the Partner API.
+  shopGid    String?
+  /// The plan's internal handle (not its display name), as reported by the API.
+  planHandle String?
+  /// Feature tier granted to this shop. "none" locks the app behind the plan page.
+  tier       String    @default("none")
+  /// Which system granted the tier: "app_pricing" | "legacy" | "none".
+  tierSource String    @default("none")
+  /// When the Partner API was last consulted, successful or not.
+  lastSyncAt DateTime?
+  /// False when the last read failed, so a stale tier can be spotted in support.
+  lastSyncOk Boolean   @default(false)
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+}
+
+// Maps a plan's internal handle to a feature tier. The Partner Dashboard can
+// grow plans this code has never heard of (private plans, promo plans), and a
+// mapping row beats shipping a release, so this table is the override point.
+model PlanTierMapping {
+  id         String   @id @default(cuid())
+  planHandle String   @unique
+  tier       String
+  note       String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+}
+
+// Singleton-ish banner rendered at the top of every merchant's admin, edited
+// from the owner-only surface. Exists so an outage notice does not need a
+// deploy.
+model GlobalBanner {
+  id        String   @id @default(cuid())
+  message   String
+  /// Polaris banner tone: "info" | "warning" | "critical" | "success".
+  tone      String   @default("info")
+  active    Boolean  @default(false)
+  updatedAt DateTime @updatedAt
 }
 
 model MediaAsset {

@@ -1,6 +1,7 @@
-import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
+import type { LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
-import { Form, useLoaderData, useNavigation } from "@remix-run/react";
+import { useCallback, useState } from "react";
+import { useLoaderData } from "@remix-run/react";
 import {
   Page,
   Layout,
@@ -15,47 +16,47 @@ import {
   Banner,
 } from "@shopify/polaris";
 import shopify from "../shopify.server.js";
-import {
-  MONTHLY_PLAN,
-  MONTHLY_PLAN_AMOUNT,
-  MONTHLY_PLAN_CURRENCY,
-  MONTHLY_PLAN_TRIAL_DAYS,
-  billingReturnUrl,
-  isTestBilling,
-} from "../billing.server.js";
+import { TIER_NONE, hostedPlanPageUrl, resolveTier } from "../billing.server.js";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  const { billing } = await shopify.authenticate.admin(request);
+  const { admin, session } = await shopify.authenticate.admin(request);
 
-  // This route is exempt from the gate in app.tsx, so check subscription state
-  // here to decide between "subscribe" and "already subscribed".
-  const { hasActivePayment } = await billing.check({
-    plans: [MONTHLY_PLAN],
-    isTest: isTestBilling(),
+  // Shopify appends plan_handle when it sends the merchant back through a
+  // plan's welcome link, which is the one moment the cached tier is guaranteed
+  // stale, so that read skips the throttle.
+  const url = new URL(request.url);
+  const returningFromCheckout = url.searchParams.has("plan_handle");
+
+  const { tier, planHandle, subscription } = await resolveTier({
+    shop: session.shop,
+    admin,
+    force: returningFromCheckout,
   });
+
+  // An unset SHOPIFY_APP_HANDLE throws rather than rendering a dead button, so
+  // the page still loads and says what is wrong.
+  let planPageUrl: string | null = null;
+  let configError: string | null = null;
+  try {
+    planPageUrl = hostedPlanPageUrl(session.shop);
+  } catch (err) {
+    configError = err instanceof Error ? err.message : String(err);
+    console.error("[billing] hosted plan page URL unavailable", err);
+  }
 
   return json({
-    hasActivePayment,
-    planName: MONTHLY_PLAN,
-    amount: MONTHLY_PLAN_AMOUNT,
-    currency: MONTHLY_PLAN_CURRENCY,
-    trialDays: MONTHLY_PLAN_TRIAL_DAYS,
-    isTest: isTestBilling(),
+    // Computed here because TIER_NONE lives in the server-only billing module;
+    // referencing it from the component would pull server code into the client
+    // bundle and fail the build.
+    subscribed: tier !== TIER_NONE,
+    planHandle,
+    planName: subscription?.planName ?? null,
+    priceAmount: subscription?.priceAmount ?? null,
+    priceCurrency: subscription?.priceCurrency ?? null,
+    trialEndsAt: subscription?.trialEndsAt ?? null,
+    planPageUrl,
+    configError,
   });
-};
-
-export const action = async ({ request }: ActionFunctionArgs) => {
-  const { billing, session } = await shopify.authenticate.admin(request);
-
-  // billing.request never returns: it throws a redirect to Shopify's charge
-  // confirmation page, breaking out of the admin iframe on its own.
-  await billing.request({
-    plan: MONTHLY_PLAN,
-    isTest: isTestBilling(),
-    returnUrl: billingReturnUrl(request, session.shop),
-  });
-
-  return null;
 };
 
 const PLAN_FEATURES = [
@@ -66,25 +67,50 @@ const PLAN_FEATURES = [
 ];
 
 export default function BillingPlan() {
-  const { hasActivePayment, amount, currency, trialDays, isTest } =
-    useLoaderData<typeof loader>();
-  const navigation = useNavigation();
-  const submitting = navigation.state !== "idle";
+  const {
+    subscribed,
+    planHandle,
+    planName,
+    priceAmount,
+    priceCurrency,
+    trialEndsAt,
+    planPageUrl,
+    configError,
+  } = useLoaderData<typeof loader>();
 
-  const price = new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency,
-  }).format(amount);
+  const [errorDismissed, setErrorDismissed] = useState(false);
+  const dismissError = useCallback(() => setErrorDismissed(true), []);
+
+  // Only render a price the Partner API actually reported. Quoting a public
+  // price at a store on a private plan would be worse than showing none.
+  const price =
+    priceAmount !== null && priceCurrency
+      ? new Intl.NumberFormat("en-US", {
+          style: "currency",
+          currency: priceCurrency,
+        }).format(priceAmount)
+      : null;
+
+  const trialEnds =
+    trialEndsAt && !Number.isNaN(Date.parse(trialEndsAt))
+      ? new Intl.DateTimeFormat("en-US", { dateStyle: "long" }).format(
+          new Date(trialEndsAt),
+        )
+      : null;
+
+  // Fall back to the handle when the contract carried no display name, so the
+  // card always names something real.
+  const displayName = planName ?? planHandle ?? "Social Media Lab";
 
   return (
     <Page title="Plan" narrowWidth>
       <Layout>
-        {isTest && (
+        {configError && !errorDismissed && (
           <Layout.Section>
-            <Banner tone="info">
+            <Banner tone="critical" onDismiss={dismissError}>
               <p>
-                Test mode: subscriptions created here are not charged to a real
-                payment method.
+                The plan page cannot be opened right now because the app is
+                missing its plan configuration. Please contact support.
               </p>
             </Banner>
           </Layout.Section>
@@ -96,25 +122,36 @@ export default function BillingPlan() {
               <BlockStack gap="200">
                 <InlineStack align="space-between" blockAlign="center">
                   <Text as="h2" variant="headingLg">
-                    Social Media Lab
+                    {subscribed ? displayName : "Social Media Lab"}
                   </Text>
-                  {hasActivePayment ? (
-                    <Badge tone="success">Active</Badge>
-                  ) : (
-                    <Badge tone="info">{`${trialDays}-day free trial`}</Badge>
-                  )}
+                  {subscribed && <Badge tone="success">Active</Badge>}
                 </InlineStack>
-                <InlineStack gap="150" blockAlign="baseline">
-                  <Text as="p" variant="heading2xl">
-                    {price}
-                  </Text>
+
+                {subscribed ? (
+                  <BlockStack gap="150">
+                    {price && (
+                      <Text as="p" variant="heading2xl">
+                        {price}
+                      </Text>
+                    )}
+                    {trialEnds && (
+                      <Text as="p" tone="subdued">
+                        {`Your free trial runs until ${trialEnds}.`}
+                      </Text>
+                    )}
+                    <Text as="p" tone="subdued">
+                      Your subscription is active and everything in the app is
+                      unlocked. Plan changes and cancellation happen in your
+                      Shopify admin.
+                    </Text>
+                  </BlockStack>
+                ) : (
                   <Text as="p" tone="subdued">
-                    per month
+                    Social Media Lab needs an active subscription. Choose a plan
+                    in your Shopify admin to unlock scheduling, publishing, and
+                    your connected accounts.
                   </Text>
-                </InlineStack>
-                <Text as="p" tone="subdued">
-                  {`Billed every 30 days. Your first ${trialDays} days are free, and you can cancel any time from your Shopify admin.`}
-                </Text>
+                )}
               </BlockStack>
 
               <Divider />
@@ -132,32 +169,28 @@ export default function BillingPlan() {
 
               <Divider />
 
-              {hasActivePayment ? (
-                <BlockStack gap="300" inlineAlign="start">
-                  <Text as="p">
-                    You are subscribed. Everything in the app is unlocked.
-                  </Text>
-                  <Button variant="primary" url="/app">
-                    Back to dashboard
-                  </Button>
-                </BlockStack>
-              ) : (
-                <Form method="post">
-                  <BlockStack gap="200" inlineAlign="start">
-                    <Button
-                      variant="primary"
-                      submit
-                      loading={submitting}
-                      disabled={submitting}
-                    >
-                      {`Start ${trialDays}-day free trial`}
-                    </Button>
-                    <Text as="p" variant="bodySm" tone="subdued">
-                      You will be taken to Shopify to approve the subscription.
-                    </Text>
-                  </BlockStack>
-                </Form>
-              )}
+              <BlockStack gap="200" inlineAlign="start">
+                {/*
+                  This has to be a real anchor with target="_top": Shopify's
+                  hosted plan page refuses to be iframed, so the link must break
+                  out of the admin iframe, which a client-side navigation cannot
+                  do. Polaris routes `url` through the app's link component
+                  (Remix's Link), and React Router renders a cross-origin
+                  absolute URL as a plain <a> with the native click handler, so
+                  this is a full document navigation rather than a route change.
+                */}
+                <Button
+                  variant="primary"
+                  url={planPageUrl ?? undefined}
+                  target="_top"
+                  disabled={!planPageUrl}
+                >
+                  {subscribed ? "Change plan" : "Choose a plan"}
+                </Button>
+                <Text as="p" variant="bodySm" tone="subdued">
+                  Plans open in your Shopify admin, outside this window.
+                </Text>
+              </BlockStack>
             </BlockStack>
           </Card>
         </Layout.Section>
