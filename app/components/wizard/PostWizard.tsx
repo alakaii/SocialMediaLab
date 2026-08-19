@@ -1,9 +1,10 @@
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Banner, BlockStack, Button, InlineStack, ProgressBar, Text, Divider } from "@shopify/polaris";
+import { SaveBar } from "@shopify/app-bridge-react";
 import { useFetcher } from "@remix-run/react";
 import { useWizardState, WIZARD_STEPS } from "../../hooks/useWizardState.js";
 import type { WizardState, PostType } from "../../types/post.js";
-import { Platform } from "../../types/post.js";
+import { EMPTY_WIZARD_STATE, Platform } from "../../types/post.js";
 import {
   getPlatformsForPostType,
   PLATFORM_CONSTRAINTS,
@@ -40,11 +41,27 @@ interface PostWizardProps {
    */
   dropboxAppKey?: string | null;
   initial?: Partial<WizardState>;
+  /**
+   * Renders a contextual save bar for pages that edit an existing post. The
+   * wizard submits programmatically and has no <form> element, so App Bridge's
+   * data-save-bar attribute has nothing to hook into and the bar is driven from
+   * the wizard's own dirty state instead. `intent` is the action the Save button
+   * submits, so a scheduled post stays scheduled and a draft stays a draft.
+   * Left unset on the create flow, where each step has its own explicit action.
+   */
+  saveBar?: { id: string; intent: "save-draft" | "schedule" };
 }
 
-export function PostWizard({ brands, shop, dropboxAppKey = null, initial }: PostWizardProps) {
+export function PostWizard({ brands, shop, dropboxAppKey = null, initial, saveBar }: PostWizardProps) {
   const { state, setState, step, next, back, canAdvance, setPlatformOverride } = useWizardState(initial);
   const fetcher = useFetcher<{ error?: string }>();
+
+  // The state as it was loaded. Kept in a lazy initializer so it is captured
+  // once, giving the save bar a stable baseline for dirty state and the exact
+  // values to restore when the merchant discards.
+  const [initialState] = useState<WizardState>(() => ({ ...EMPTY_WIZARD_STATE, ...initial }));
+  const dirty =
+    saveBar != null && JSON.stringify(state) !== JSON.stringify(initialState);
 
   const progressPct = ((step + 1) / WIZARD_STEPS.length) * 100;
 
@@ -96,6 +113,11 @@ export function PostWizard({ brands, shop, dropboxAppKey = null, initial }: Post
 
   const submitting = fetcher.state !== "idle";
   const actionError = fetcher.data?.error;
+
+  // fetcher.data is immutable, so dismissal lives here. Every new response is a
+  // fresh object, which un-dismisses the banner for the next failure.
+  const [errorDismissed, setErrorDismissed] = useState(false);
+  useEffect(() => setErrorDismissed(false), [fetcher.data]);
 
   function submit(intent: "save-draft" | "schedule" | "publish-now") {
     const formData = new FormData();
@@ -191,8 +213,23 @@ export function PostWizard({ brands, shop, dropboxAppKey = null, initial }: Post
 
   return (
     <BlockStack gap="500">
-      {actionError && (
-        <Banner tone="critical">{actionError}</Banner>
+      {saveBar && (
+        <SaveBar id={saveBar.id} open={dirty}>
+          <button
+            variant="primary"
+            loading={submitting || undefined}
+            onClick={() => submit(saveBar.intent)}
+          >
+            Save
+          </button>
+          <button onClick={() => setState(initialState)}>Discard</button>
+        </SaveBar>
+      )}
+
+      {actionError && !errorDismissed && (
+        <Banner tone="critical" onDismiss={() => setErrorDismissed(true)}>
+          {actionError}
+        </Banner>
       )}
 
       {/* Step indicator */}

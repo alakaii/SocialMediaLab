@@ -15,6 +15,7 @@ import {
   PostNotEditableError,
 } from "../services/post.server.js";
 import { isManualPlatform } from "../utils/platformConstraints.js";
+import { PostStatus } from "../types/post.js";
 import { PostWizard } from "../components/wizard/PostWizard.js";
 import type {
   WizardState,
@@ -130,6 +131,12 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     shop,
     wizardInitial,
     postId: post.id,
+    // The save bar leaves the post where it already is: a scheduled post is
+    // rescheduled with the edits, a draft is saved as a draft.
+    saveIntent:
+      post.status === PostStatus.Scheduled
+        ? ("schedule" as const)
+        : ("save-draft" as const),
     dropboxAppKey: process.env.DROPBOX_APP_KEY || null,
   });
 };
@@ -176,7 +183,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
 };
 
 export default function EditPost() {
-  const { brands, shop, wizardInitial, postId, dropboxAppKey } =
+  const { brands, shop, wizardInitial, postId, saveIntent, dropboxAppKey } =
     useLoaderData<typeof loader>();
 
   return (
@@ -198,6 +205,7 @@ export default function EditPost() {
               shop={shop}
               dropboxAppKey={dropboxAppKey}
               initial={wizardInitial}
+              saveBar={{ id: "edit-post-save-bar", intent: saveIntent }}
             />
           </Card>
         </Layout.Section>

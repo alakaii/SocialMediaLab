@@ -101,6 +101,11 @@ function BlueskyConnectModal({
   const submitting = fetcher.state !== "idle";
   const error = fetcher.data && fetcher.data.ok === false ? fetcher.data.error : undefined;
 
+  // fetcher.data is immutable, so dismissal lives here. Every new response is a
+  // fresh object, which un-dismisses the banner for the next failure.
+  const [errorDismissed, setErrorDismissed] = useState(false);
+  useEffect(() => setErrorDismissed(false), [fetcher.data]);
+
   // Reset the form each time the modal is opened for a brand.
   useEffect(() => {
     if (open) {
@@ -139,8 +144,8 @@ function BlueskyConnectModal({
     >
       <Modal.Section>
         <BlockStack gap="400">
-          {error && (
-            <Banner tone="critical">
+          {error && !errorDismissed && (
+            <Banner tone="critical" onDismiss={() => setErrorDismissed(true)}>
               <p>{error}</p>
             </Banner>
           )}

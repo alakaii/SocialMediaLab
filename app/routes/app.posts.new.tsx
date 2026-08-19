@@ -89,6 +89,8 @@ export default function NewPost() {
         )}
         <Layout.Section>
           <Card>
+            {/* No save bar here on purpose: a step wizard with explicit per-step
+                actions is not an unsaved-changes form. */}
             <PostWizard
               brands={brands}
               shop={shop}

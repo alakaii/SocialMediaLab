@@ -28,10 +28,7 @@ import {
   PostNotEditableError,
 } from "../services/post.server.js";
 import { StatusBadge } from "../components/shared/StatusBadge.js";
-import {
-  PLATFORM_CONSTRAINTS,
-  isManualPlatform,
-} from "../utils/platformConstraints.js";
+import { PLATFORM_CONSTRAINTS } from "../utils/platformConstraints.js";
 import { PostStatus, PlatformPostStatus, isPostEditable } from "../types/post.js";
 import type { Platform } from "../types/post.js";
 import {
@@ -305,6 +302,15 @@ export default function PostDetail() {
   const publishError = publishFetcher.data?.error;
   const publishSubmittedRef = useRef(false);
 
+  // Fetcher and loader data are immutable, so banner dismissal lives here. Each
+  // new publish response is a fresh object, which un-dismisses the banner.
+  const [publishErrorDismissed, setPublishErrorDismissed] = useState(false);
+  useEffect(() => setPublishErrorDismissed(false), [publishFetcher.data]);
+
+  // Per-platform failures come from the record, so dismissal is tracked by row
+  // id. Reloading brings them back, which is right: the failure is still real.
+  const [dismissedPlatformErrors, setDismissedPlatformErrors] = useState<string[]>([]);
+
   // Close the confirmation modal once a publish-now attempt settles, whether it
   // succeeded (page revalidates to the new status) or failed (the error banner
   // behind the modal becomes visible). The ref ensures we close exactly once per
@@ -373,9 +379,14 @@ export default function PostDetail() {
       </Modal>
 
       <Layout>
-        {publishError && (
+        {publishError && !publishErrorDismissed && (
           <Layout.Section>
-            <Banner tone="critical">{publishError}</Banner>
+            <Banner
+              tone="critical"
+              onDismiss={() => setPublishErrorDismissed(true)}
+            >
+              {publishError}
+            </Banner>
           </Layout.Section>
         )}
 
@@ -460,8 +471,15 @@ export default function PostDetail() {
                           {pp.content && (
                             <Text as="p" variant="bodySm" tone="subdued">{pp.content.slice(0, 100)}</Text>
                           )}
-                          {pp.errorMessage && (
-                            <Banner tone="critical">{pp.errorMessage}</Banner>
+                          {pp.errorMessage && !dismissedPlatformErrors.includes(pp.id) && (
+                            <Banner
+                              tone="critical"
+                              onDismiss={() =>
+                                setDismissedPlatformErrors((ids) => [...ids, pp.id])
+                              }
+                            >
+                              {pp.errorMessage}
+                            </Banner>
                           )}
                         </BlockStack>
                       </InlineStack>
