@@ -15,7 +15,7 @@ import {
   Banner,
   ProgressBar,
 } from "@shopify/polaris";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import shopify from "../shopify.server.js";
 import { getUpcomingPosts } from "../services/post.server.js";
 import { prisma } from "../db.server.js";
@@ -131,6 +131,9 @@ export default function Dashboard() {
   const actionData = useActionData<typeof action>();
   const navigation = useNavigation();
   const [errorDismissed, setErrorDismissed] = useState(false);
+  // Every action response is a fresh object, so a repeat failure after the
+  // banner was dismissed shows the banner again.
+  useEffect(() => setErrorDismissed(false), [actionData]);
 
   const isDismissing = navigation.state === "submitting";
   const totalSteps = onboardingSteps.length;
