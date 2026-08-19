@@ -4,9 +4,12 @@ import { Link, Outlet, useLoaderData, useRouteError } from "@remix-run/react";
 import { boundary } from "@shopify/shopify-app-remix/server";
 import { AppProvider } from "@shopify/shopify-app-remix/react";
 import { NavMenu } from "@shopify/app-bridge-react";
+import { Banner, Box } from "@shopify/polaris";
+import type { BannerProps } from "@shopify/polaris";
 import polarisStyles from "@shopify/polaris/build/esm/styles.css?url";
 import shopify from "../shopify.server.js";
 import { BILLING_PLAN_PATH, TIER_NONE, resolveTier } from "../billing.server.js";
+import { getActiveGlobalBanner, isOwnerShop } from "../services/owner.server.js";
 
 export const links = () => [{ rel: "stylesheet", href: polarisStyles }];
 
@@ -26,11 +29,28 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     }
   }
 
-  return json({ apiKey: process.env.SHOPIFY_API_KEY ?? "" });
+  // The owner surface sits under /app, so it is behind the tier gate above on
+  // purpose: the owner store subscribes through a private plan like anyone else.
+  const globalBanner = await getActiveGlobalBanner();
+
+  return json({
+    apiKey: process.env.SHOPIFY_API_KEY ?? "",
+    globalBanner,
+    isOwner: isOwnerShop(session.shop),
+  });
 };
 
+/** The tones Polaris Banner accepts. Anything else stored falls back to info. */
+const BANNER_TONES = ["info", "warning", "critical", "success"] as const;
+
+function bannerTone(tone: string): NonNullable<BannerProps["tone"]> {
+  return (BANNER_TONES as readonly string[]).includes(tone)
+    ? (tone as NonNullable<BannerProps["tone"]>)
+    : "info";
+}
+
 export default function AppLayout() {
-  const { apiKey } = useLoaderData<typeof loader>();
+  const { apiKey, globalBanner, isOwner } = useLoaderData<typeof loader>();
 
   return (
     // isEmbeddedApp is false on purpose. In this version of
@@ -45,7 +65,20 @@ export default function AppLayout() {
         <Link to="/app/brands">Brands</Link>
         <Link to="/app/connections">Connections</Link>
         <Link to="/app/billing">Plan</Link>
+        {/* Discoverability for us, not a lock. The route itself 404s for
+            everyone who is not the owner store. */}
+        {isOwner ? <Link to="/app/owner">Owner</Link> : null}
       </NavMenu>
+      {globalBanner && (
+        // Deliberately not dismissible: this is the outage and maintenance
+        // channel, and a merchant who dismissed it would stop seeing why the
+        // app is behaving strangely.
+        <Box paddingInline="400" paddingBlockStart="400">
+          <Banner tone={bannerTone(globalBanner.tone)}>
+            {globalBanner.message}
+          </Banner>
+        </Box>
+      )}
       <Outlet />
     </AppProvider>
   );
