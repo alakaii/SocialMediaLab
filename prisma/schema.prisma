@@ -204,6 +204,40 @@ model GlobalBanner {
   updatedAt DateTime @updatedAt
 }
 
+// One row per App Event this app has decided to send (or deliberately not send)
+// for a shop's usage meter. The App Events API has no read-back, so this table
+// is the app's only record of what was billed; the owner surface reads it.
+//
+// The unique pair below is the local guard against billing a period twice. The
+// permanent idempotency key is the remote guard, and either one alone would be
+// enough, which is exactly why both exist.
+model UsageEmission {
+  id             String   @id @default(cuid())
+  shop           String
+  /// UTC calendar month, "YYYY-MM". See usage-billing.server.ts for why the
+  /// app bills on calendar months rather than on contract billing periods.
+  periodKey      String
+  /// The meter's event handle as defined in the Partner Dashboard.
+  eventHandle    String
+  /// Units billed: the shop's brand count at the moment of the sweep.
+  quantity       Int
+  /// Sent to Shopify verbatim. Shopify keeps billing keys permanently, so this
+  /// value must never be reused for a different quantity.
+  idempotencyKey String   @unique
+  /// "pending" | "sent" | "dry_run" | "skipped" | "failed". "pending" is
+  /// transient: it is written just before the request and replaced by the
+  /// outcome, so a row left at "pending" means the process died mid-send.
+  status         String
+  /// Error text, or a note explaining a "skipped" row.
+  detail         String?
+  /// When Shopify accepted the event. Null for every non-"sent" row.
+  sentAt         DateTime?
+  createdAt      DateTime @default(now())
+
+  @@unique([shop, eventHandle, periodKey])
+  @@index([shop])
+}
+
 model MediaAsset {
   id          String   @id @default(cuid())
   postId      String

@@ -16,7 +16,9 @@ import {
   Banner,
 } from "@shopify/polaris";
 import shopify from "../shopify.server.js";
+import { prisma } from "../db.server.js";
 import { TIER_NONE, hostedPlanPageUrl, resolveTier } from "../billing.server.js";
+import { BRAND_PRICE_USD } from "../services/usage-billing.server.js";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { admin, session } = await shopify.authenticate.admin(request);
@@ -44,6 +46,11 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     console.error("[billing] hosted plan page URL unavailable", err);
   }
 
+  // What the merchant is actually billed for. The plan's base price is $0 and
+  // the entire charge comes from the per-brand meter, so the brand count is the
+  // only number on this page a merchant can act on.
+  const brandCount = await prisma.brand.count({ where: { shop: session.shop } });
+
   return json({
     // Computed here because TIER_NONE lives in the server-only billing module;
     // referencing it from the component would pull server code into the client
@@ -53,9 +60,11 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     planName: subscription?.planName ?? null,
     priceAmount: subscription?.priceAmount ?? null,
     priceCurrency: subscription?.priceCurrency ?? null,
-    trialEndsAt: subscription?.trialEndsAt ?? null,
     planPageUrl,
     configError,
+    brandCount,
+    // Same reason as TIER_NONE: the rate lives in a server-only module.
+    pricePerBrand: BRAND_PRICE_USD,
   });
 };
 
@@ -66,6 +75,11 @@ const PLAN_FEATURES = [
   "Hashtag memory that reuses what works per brand",
 ];
 
+const USD = new Intl.NumberFormat("en-US", {
+  style: "currency",
+  currency: "USD",
+});
+
 export default function BillingPlan() {
   const {
     subscribed,
@@ -73,30 +87,30 @@ export default function BillingPlan() {
     planName,
     priceAmount,
     priceCurrency,
-    trialEndsAt,
     planPageUrl,
     configError,
+    brandCount,
+    pricePerBrand,
   } = useLoaderData<typeof loader>();
 
   const [errorDismissed, setErrorDismissed] = useState(false);
   const dismissError = useCallback(() => setErrorDismissed(true), []);
 
-  // Only render a price the Partner API actually reported. Quoting a public
-  // price at a store on a private plan would be worse than showing none.
-  const price =
-    priceAmount !== null && priceCurrency
+  // Only render a price the Partner API actually reported, and only when it is
+  // a real charge. The base price on this plan is $0, which the contract may
+  // report as 0 or omit entirely; either way "$0.00" in the price slot would
+  // read as "this app is free" when the meter is where the money is.
+  const basePrice =
+    priceAmount !== null && priceAmount > 0 && priceCurrency
       ? new Intl.NumberFormat("en-US", {
           style: "currency",
           currency: priceCurrency,
         }).format(priceAmount)
       : null;
 
-  const trialEnds =
-    trialEndsAt && !Number.isNaN(Date.parse(trialEndsAt))
-      ? new Intl.DateTimeFormat("en-US", { dateStyle: "long" }).format(
-          new Date(trialEndsAt),
-        )
-      : null;
+  const perBrand = `${USD.format(pricePerBrand)} per brand per month`;
+  const brandsLabel = `${brandCount} ${brandCount === 1 ? "brand" : "brands"}`;
+  const estimate = USD.format(brandCount * pricePerBrand);
 
   // Fall back to the handle when the contract carried no display name, so the
   // card always names something real.
@@ -129,14 +143,18 @@ export default function BillingPlan() {
 
                 {subscribed ? (
                   <BlockStack gap="150">
-                    {price && (
-                      <Text as="p" variant="heading2xl">
-                        {price}
-                      </Text>
-                    )}
-                    {trialEnds && (
+                    <Text as="p" variant="heading2xl">
+                      Free to install
+                    </Text>
+                    <Text as="p" variant="headingMd">
+                      {perBrand}
+                    </Text>
+                    <Text as="p" tone="subdued">
+                      {`You have ${brandsLabel}, about ${estimate} per month.`}
+                    </Text>
+                    {basePrice && (
                       <Text as="p" tone="subdued">
-                        {`Your free trial runs until ${trialEnds}.`}
+                        {`Your plan also carries a base charge of ${basePrice}.`}
                       </Text>
                     )}
                     <Text as="p" tone="subdued">

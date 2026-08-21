@@ -1,7 +1,7 @@
 import type { ActionFunctionArgs } from "@remix-run/node";
 import { json, redirect } from "@remix-run/node";
 import { useActionData, Form } from "@remix-run/react";
-import { Page, Layout, Card, TextField, Button, Select, FormLayout, Banner } from "@shopify/polaris";
+import { Page, Layout, Card, TextField, Button, Select, FormLayout, Banner, BlockStack, Text } from "@shopify/polaris";
 import { useEffect, useState } from "react";
 import shopify from "../shopify.server.js";
 import { createBrand } from "../services/brand.server.js";
@@ -83,7 +83,16 @@ export default function NewBrand() {
                   value={timezone}
                   onChange={setTimezone}
                 />
-                <Button variant="primary" submit>Create Brand</Button>
+                {/* The plan is free to install and charges per brand, so this
+                    button is the moment the bill changes. The rate is
+                    BRAND_PRICE_USD in usage-billing.server.ts; keep the two in
+                    step. */}
+                <BlockStack gap="200" inlineAlign="start">
+                  <Text as="p" variant="bodySm" tone="subdued">
+                    Each brand adds $2 per month to your subscription.
+                  </Text>
+                  <Button variant="primary" submit>Create Brand</Button>
+                </BlockStack>
               </FormLayout>
             </Form>
           </Card>

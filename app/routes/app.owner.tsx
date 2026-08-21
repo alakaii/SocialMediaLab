@@ -2,7 +2,8 @@
  * Owner-only operations surface. Not a merchant page: it is reachable from one
  * store (APP_OWNER_SHOP) and 404s for everyone else.
  *
- * Three jobs, all of them things that would otherwise need a deploy:
+ * Four jobs, all of them things that would otherwise need a deploy or a psql
+ * session:
  *
  * 1. Plan handle mappings. The Partner Dashboard can grow plans this code has
  *    never heard of (private plans, promo plans), and the tier resolver logs
@@ -13,6 +14,9 @@
  *    editable while things are on fire.
  * 3. A read-only view of what every installed shop currently resolves to,
  *    which is where an unmapped handle shows up without reading logs.
+ * 4. The usage-emission ledger. App Events have no read-back, so what the app
+ *    wrote down is the only record of what it billed, and this card is how a
+ *    failed or stuck emission gets noticed.
  */
 
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
@@ -35,7 +39,7 @@ import {
   Text,
   TextField,
 } from "@shopify/polaris";
-import type { BannerProps } from "@shopify/polaris";
+import type { BadgeProps, BannerProps } from "@shopify/polaris";
 import shopify from "../shopify.server.js";
 import { prisma } from "../db.server.js";
 import { requireOwnerShop } from "../services/owner.server.js";
@@ -57,7 +61,7 @@ function normalizeTone(tone: string): BannerTone {
 }
 
 /** Same instant, same string, on the server and after hydration. */
-const SYNC_TIME_FORMAT = new Intl.DateTimeFormat("en-US", {
+const UTC_TIME_FORMAT = new Intl.DateTimeFormat("en-US", {
   dateStyle: "medium",
   timeStyle: "short",
   timeZone: "UTC",
@@ -67,11 +71,15 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await shopify.authenticate.admin(request);
   requireOwnerShop(session.shop);
 
-  const [mappings, banner, shops] = await Promise.all([
+  const [mappings, banner, shops, emissions] = await Promise.all([
     prisma.planTierMapping.findMany({ orderBy: { planHandle: "asc" } }),
     // At most one row ever exists, so the first one is the singleton.
     prisma.globalBanner.findFirst(),
     prisma.shopBilling.findMany({ orderBy: { shop: "asc" } }),
+    // The App Events API has no read-back, so this table is the only record of
+    // what the app has billed. Newest first, capped: this is a health check, not
+    // an archive.
+    prisma.usageEmission.findMany({ orderBy: { createdAt: "desc" }, take: 20 }),
   ]);
 
   const mappedHandles = new Set(mappings.map((mapping) => mapping.planHandle));
@@ -92,10 +100,21 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       tier: row.tier,
       tierSource: row.tierSource,
       lastSyncOk: row.lastSyncOk,
-      lastSyncAt: row.lastSyncAt ? SYNC_TIME_FORMAT.format(row.lastSyncAt) : null,
+      lastSyncAt: row.lastSyncAt ? UTC_TIME_FORMAT.format(row.lastSyncAt) : null,
       // A handle with no mapping row is a mapping waiting to be added, which is
       // the whole reason this table is on the page.
       unmapped: Boolean(row.planHandle) && !mappedHandles.has(row.planHandle!),
+    })),
+    emissions: emissions.map((row) => ({
+      id: row.id,
+      shop: row.shop,
+      periodKey: row.periodKey,
+      quantity: row.quantity,
+      status: row.status,
+      // sentAt is the billing moment and createdAt is the decision moment; for
+      // every status but "sent" they are the same thing.
+      at: UTC_TIME_FORMAT.format(row.sentAt ?? row.createdAt),
+      detail: row.detail,
     })),
     // TIER_FULL lives in a server-only module, so the value travels through the
     // loader instead of being referenced from the component.
@@ -202,8 +221,21 @@ const TONE_OPTIONS = BANNER_TONES.map((tone) => ({
   value: tone,
 }));
 
+/**
+ * Badge tone per ledger status. "pending" is the loud one: it means the process
+ * died between writing the row and hearing back from Shopify, so whether that
+ * period was billed is genuinely unknown.
+ */
+function emissionTone(status: string): BadgeProps["tone"] {
+  if (status === "sent") return "success";
+  if (status === "failed") return "critical";
+  if (status === "pending") return "warning";
+  return undefined;
+}
+
 export default function Owner() {
-  const { mappings, banner, shops, suggestedTier } = useLoaderData<typeof loader>();
+  const { mappings, banner, shops, emissions, suggestedTier } =
+    useLoaderData<typeof loader>();
   const actionData = useActionData<typeof action>();
 
   const [planHandle, setPlanHandle] = useState("");
@@ -465,6 +497,74 @@ export default function Owner() {
                           <Badge tone="critical">failed</Badge>
                         )}
                       </InlineStack>
+                    </IndexTable.Cell>
+                  </IndexTable.Row>
+                ))}
+              </IndexTable>
+            </BlockStack>
+          </Card>
+        </Layout.Section>
+
+        <Layout.Section>
+          <Card>
+            <BlockStack gap="400">
+              <BlockStack gap="100">
+                <Text as="h2" variant="headingMd">
+                  Usage emissions
+                </Text>
+                <Text as="p" tone="subdued">
+                  The 20 most recent App Events the daily sweep decided on, one
+                  per shop per calendar month. The App Events API has no
+                  read-back, so this is the only record that exists of what was
+                  billed. "dry_run" means USAGE_BILLING_ENABLED was not "true"
+                  and nothing left the server.
+                </Text>
+              </BlockStack>
+
+              <IndexTable
+                resourceName={{ singular: "emission", plural: "emissions" }}
+                itemCount={emissions.length}
+                selectable={false}
+                headings={[
+                  { title: "Shop" },
+                  { title: "Period" },
+                  { title: "Brands" },
+                  { title: "Status" },
+                  { title: "When (UTC)" },
+                  { title: "Detail" },
+                ]}
+                emptyState={
+                  <BlockStack gap="100" inlineAlign="center">
+                    <Text as="p" tone="subdued">
+                      The sweep has not recorded anything yet.
+                    </Text>
+                  </BlockStack>
+                }
+              >
+                {emissions.map((row, index) => (
+                  <IndexTable.Row id={row.id} key={row.id} position={index}>
+                    <IndexTable.Cell>
+                      <Text as="span" fontWeight="semibold">
+                        {row.shop}
+                      </Text>
+                    </IndexTable.Cell>
+                    <IndexTable.Cell>{row.periodKey}</IndexTable.Cell>
+                    <IndexTable.Cell>{row.quantity}</IndexTable.Cell>
+                    <IndexTable.Cell>
+                      <Badge tone={emissionTone(row.status)}>{row.status}</Badge>
+                    </IndexTable.Cell>
+                    <IndexTable.Cell>
+                      <Text as="span" tone="subdued">
+                        {row.at}
+                      </Text>
+                    </IndexTable.Cell>
+                    <IndexTable.Cell>
+                      <Text
+                        as="span"
+                        tone={row.status === "failed" ? "critical" : "subdued"}
+                      >
+                        {row.detail ?? ""}
+                      </Text>
                     </IndexTable.Cell>
                   </IndexTable.Row>
                 ))}
