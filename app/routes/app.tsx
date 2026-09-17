@@ -10,6 +10,8 @@ import polarisStyles from "@shopify/polaris/build/esm/styles.css?url";
 import shopify from "../shopify.server.js";
 import { BILLING_PLAN_PATH, TIER_NONE, resolveTier } from "../billing.server.js";
 import { getActiveGlobalBanner, isOwnerShop } from "../services/owner.server.js";
+import { supportBeeWidgetConfig } from "../services/support-bee.server.js";
+import { SupportBeeWidget } from "../components/SupportBeeWidget.js";
 
 export const links = () => [{ rel: "stylesheet", href: polarisStyles }];
 
@@ -21,12 +23,14 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   // after authenticate.admin, so the OAuth and exit-iframe flows (which live
   // outside /app) are untouched.
   const url = new URL(request.url);
+  let plan: string | undefined;
   if (!url.pathname.startsWith(BILLING_PLAN_PATH)) {
     const { tier } = await resolveTier({ shop: session.shop, admin });
     if (tier === TIER_NONE) {
       // Keep the query string so shop/host/embedded survive a document load.
       throw redirect(`${BILLING_PLAN_PATH}${url.search}`);
     }
+    plan = tier;
   }
 
   // The owner surface sits under /app, so it is behind the tier gate above on
@@ -37,6 +41,10 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     apiKey: process.env.SHOPIFY_API_KEY ?? "",
     globalBanner,
     isOwner: isOwnerShop(session.shop),
+    supportBee: supportBeeWidgetConfig({
+      sub: session.shop,
+      meta: plan ? { plan } : undefined,
+    }),
   });
 };
 
@@ -50,7 +58,7 @@ function bannerTone(tone: string): NonNullable<BannerProps["tone"]> {
 }
 
 export default function AppLayout() {
-  const { apiKey, globalBanner, isOwner } = useLoaderData<typeof loader>();
+  const { apiKey, globalBanner, isOwner, supportBee } = useLoaderData<typeof loader>();
 
   return (
     // isEmbeddedApp is false on purpose. In this version of
@@ -80,6 +88,7 @@ export default function AppLayout() {
         </Box>
       )}
       <Outlet />
+      {supportBee ? <SupportBeeWidget {...supportBee} appName="Social Media Lab" /> : null}
     </AppProvider>
   );
 }
